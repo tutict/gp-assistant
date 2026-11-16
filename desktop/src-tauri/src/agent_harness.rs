@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::{market::build_http_client_with_proxy, runtime};
+use crate::{network::http::build_http_client_with_proxy, runtime};
 #[cfg(test)]
 use futures::StreamExt;
 use percent_encoding::percent_decode_str;

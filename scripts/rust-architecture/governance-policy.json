@@ -1,0 +1,491 @@
+{
+  "provenance": [
+    "task-7-fingerprint-scope.json::ordered_core_labels",
+    "unchanged native research evaluation.rs original ordered call",
+    "unchanged desktop screening.rs limited original ordered call"
+  ],
+  "fingerprints": [
+    {
+      "area": "core",
+      "module": "crate::scoring_parameters",
+      "function": "scoring_implementation_fingerprint",
+      "domain": "gp-core-scoring-implementation/v2-lf\u0000",
+      "entries": [
+        {
+          "label": "lib.rs",
+          "source": "native/gp-core/src/lib.rs",
+          "derived": false
+        },
+        {
+          "label": "error.rs",
+          "source": "native/gp-core/src/error.rs",
+          "derived": false
+        },
+        {
+          "label": "dates.rs",
+          "source": "native/gp-core/src/dates.rs",
+          "derived": false
+        },
+        {
+          "label": "numeric.rs",
+          "source": "native/gp-core/src/numeric.rs",
+          "derived": false
+        },
+        {
+          "label": "market_data.rs",
+          "source": "native/gp-core/src/market_data.rs",
+          "derived": false
+        },
+        {
+          "label": "capital_evidence.rs",
+          "source": "native/gp-core/src/capital_evidence.rs",
+          "derived": false
+        },
+        {
+          "label": "capital_evidence/types.rs",
+          "source": "native/gp-core/src/capital_evidence/types.rs",
+          "derived": false
+        },
+        {
+          "label": "data_source.rs",
+          "source": "native/gp-core/src/data_source.rs",
+          "derived": false
+        },
+        {
+          "label": "demo_data.rs",
+          "source": "native/gp-core/src/demo_data.rs",
+          "derived": false
+        },
+        {
+          "label": "screening.rs",
+          "source": "native/gp-core/src/screening.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/types.rs",
+          "source": "native/gp-core/src/screening/types.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/criteria.rs",
+          "source": "native/gp-core/src/screening/criteria.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/classification.rs",
+          "source": "native/gp-core/src/screening/classification.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/scoring.rs",
+          "source": "native/gp-core/src/screening/scoring.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/grouping.rs",
+          "source": "native/gp-core/src/screening/grouping.rs",
+          "derived": false
+        },
+        {
+          "label": "screening/service.rs",
+          "source": "native/gp-core/src/screening/service.rs",
+          "derived": false
+        },
+        {
+          "label": "graph_compat.rs",
+          "source": "native/gp-core/src/graph_compat.rs",
+          "derived": false
+        },
+        {
+          "label": "graph_compat/types.rs",
+          "source": "native/gp-core/src/graph_compat/types.rs",
+          "derived": false
+        },
+        {
+          "label": "graph_compat/service.rs",
+          "source": "native/gp-core/src/graph_compat/service.rs",
+          "derived": false
+        },
+        {
+          "label": "text.rs",
+          "source": "native/gp-core/src/text.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/request.rs",
+          "source": "native/gp-core/src/backtest/request.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/types.rs",
+          "source": "native/gp-core/src/backtest/types.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/history.rs",
+          "source": "native/gp-core/src/backtest/history.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/selection.rs",
+          "source": "native/gp-core/src/backtest/selection.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/simulation.rs",
+          "source": "native/gp-core/src/backtest/simulation.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/metrics.rs",
+          "source": "native/gp-core/src/backtest/metrics.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest/service.rs",
+          "source": "native/gp-core/src/backtest/service.rs",
+          "derived": false
+        },
+        {
+          "label": "release_gate.rs",
+          "source": "native/gp-core/src/release_gate.rs",
+          "derived": false
+        },
+        {
+          "label": "backtest.rs",
+          "source": "native/gp-core/src/backtest.rs",
+          "derived": false
+        },
+        {
+          "label": "trend/types.rs",
+          "source": "native/gp-core/src/trend/types.rs",
+          "derived": false
+        },
+        {
+          "label": "trend/indicators.rs",
+          "source": "native/gp-core/src/trend/indicators.rs",
+          "derived": false
+        },
+        {
+          "label": "trend/service.rs",
+          "source": "native/gp-core/src/trend/service.rs",
+          "derived": false
+        },
+        {
+          "label": "trend_screen/types.rs",
+          "source": "native/gp-core/src/trend_screen/types.rs",
+          "derived": false
+        },
+        {
+          "label": "trend_screen/rules.rs",
+          "source": "native/gp-core/src/trend_screen/rules.rs",
+          "derived": false
+        },
+        {
+          "label": "trend_screen/service.rs",
+          "source": "native/gp-core/src/trend_screen/service.rs",
+          "derived": false
+        },
+        {
+          "label": "observation/types.rs",
+          "source": "native/gp-core/src/observation/types.rs",
+          "derived": false
+        },
+        {
+          "label": "observation/financial.rs",
+          "source": "native/gp-core/src/observation/financial.rs",
+          "derived": false
+        },
+        {
+          "label": "observation/capital.rs",
+          "source": "native/gp-core/src/observation/capital.rs",
+          "derived": false
+        },
+        {
+          "label": "observation/service.rs",
+          "source": "native/gp-core/src/observation/service.rs",
+          "derived": false
+        },
+        {
+          "label": "trend.rs",
+          "source": "native/gp-core/src/trend.rs",
+          "derived": false
+        },
+        {
+          "label": "trend_screen.rs",
+          "source": "native/gp-core/src/trend_screen.rs",
+          "derived": false
+        },
+        {
+          "label": "observation.rs",
+          "source": "native/gp-core/src/observation.rs",
+          "derived": false
+        },
+        {
+          "label": "adaptive_screen.rs",
+          "source": "native/gp-core/src/adaptive_screen.rs",
+          "derived": false
+        },
+        {
+          "label": "rates.rs",
+          "source": "native/gp-core/src/rates.rs",
+          "derived": false
+        },
+        {
+          "label": "industry_rank.rs",
+          "source": "native/gp-core/src/industry_rank.rs",
+          "derived": false
+        },
+        {
+          "label": "scoring_parameters.rs",
+          "source": "native/gp-core/src/scoring_parameters.rs",
+          "derived": false
+        },
+        {
+          "label": "volatility.rs",
+          "source": "native/gp-core/src/volatility.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/types.rs",
+          "source": "native/gp-core/src/agent/types.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/registry.rs",
+          "source": "native/gp-core/src/agent/registry.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/intent.rs",
+          "source": "native/gp-core/src/agent/intent.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/response.rs",
+          "source": "native/gp-core/src/agent/response.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/stock_summary.rs",
+          "source": "native/gp-core/src/agent/stock_summary.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/service.rs",
+          "source": "native/gp-core/src/agent/service.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/stream.rs",
+          "source": "native/gp-core/src/agent/stream.rs",
+          "derived": false
+        },
+        {
+          "label": "agent/context.rs",
+          "source": "native/gp-core/src/agent/context.rs",
+          "derived": false
+        },
+        {
+          "label": "mobile_skill/types.rs",
+          "source": "native/gp-core/src/mobile_skill/types.rs",
+          "derived": false
+        },
+        {
+          "label": "mobile_skill/rules.rs",
+          "source": "native/gp-core/src/mobile_skill/rules.rs",
+          "derived": false
+        },
+        {
+          "label": "mobile_skill/service.rs",
+          "source": "native/gp-core/src/mobile_skill/service.rs",
+          "derived": false
+        },
+        {
+          "label": "json_api/requests.rs",
+          "source": "native/gp-core/src/json_api/requests.rs",
+          "derived": false
+        },
+        {
+          "label": "json_api/adapters.rs",
+          "source": "native/gp-core/src/json_api/adapters.rs",
+          "derived": false
+        },
+        {
+          "label": "agent.rs",
+          "source": "native/gp-core/src/agent.rs",
+          "derived": false
+        },
+        {
+          "label": "mobile_skill.rs",
+          "source": "native/gp-core/src/mobile_skill.rs",
+          "derived": false
+        },
+        {
+          "label": "json_api.rs",
+          "source": "native/gp-core/src/json_api.rs",
+          "derived": false
+        },
+        {
+          "label": "ffi.rs",
+          "source": "native/gp-core/src/ffi.rs",
+          "derived": false
+        },
+        {
+          "label": "source_fingerprint.rs",
+          "source": "native/gp-core/src/source_fingerprint.rs",
+          "derived": false
+        },
+        {
+          "label": "Cargo.toml",
+          "source": "native/gp-core/Cargo.toml",
+          "derived": false
+        },
+        {
+          "label": "Cargo.lock",
+          "source": "native/gp-core/Cargo.lock",
+          "derived": false
+        }
+      ],
+      "all_declared_sources": true
+    },
+    {
+      "area": "native-research",
+      "module": "crate::evaluation",
+      "function": "research_implementation_fingerprint",
+      "domain": "gp-research-implementation/v2-lf\u0000",
+      "entries": [
+        {
+          "label": "models.rs",
+          "source": "native/gp-research/src/models.rs",
+          "derived": false
+        },
+        {
+          "label": "dataset.rs",
+          "source": "native/gp-research/src/dataset.rs",
+          "derived": false
+        },
+        {
+          "label": "import.rs",
+          "source": "native/gp-research/src/import.rs",
+          "derived": false
+        },
+        {
+          "label": "evaluation.rs",
+          "source": "native/gp-research/src/evaluation.rs",
+          "derived": false
+        },
+        {
+          "label": "lib.rs",
+          "source": "native/gp-research/src/lib.rs",
+          "derived": false
+        },
+        {
+          "label": "calibration.rs",
+          "source": "native/gp-research/src/calibration.rs",
+          "derived": false
+        },
+        {
+          "label": "diagnostics.rs",
+          "source": "native/gp-research/src/diagnostics.rs",
+          "derived": false
+        },
+        {
+          "label": "release_gate.rs",
+          "source": "native/gp-research/src/release_gate.rs",
+          "derived": false
+        },
+        {
+          "label": "registry.rs",
+          "source": "native/gp-research/src/registry.rs",
+          "derived": false
+        },
+        {
+          "label": "cli.rs",
+          "source": "native/gp-research/src/cli.rs",
+          "derived": false
+        },
+        {
+          "label": "main.rs",
+          "source": "native/gp-research/src/main.rs",
+          "derived": false
+        },
+        {
+          "label": "Cargo.toml",
+          "source": "native/gp-research/Cargo.toml",
+          "derived": false
+        },
+        {
+          "label": "Cargo.lock",
+          "source": "native/gp-research/Cargo.lock",
+          "derived": false
+        }
+      ],
+      "all_declared_sources": true
+    },
+    {
+      "area": "market",
+      "module": "crate::screening",
+      "function": "adaptive_release_implementation_fingerprint",
+      "domain": "adaptive-release-contract-v4-lf\u0000",
+      "entries": [
+        {
+          "label": "core_fingerprint",
+          "source": "gp_core::scoring_implementation_fingerprint",
+          "derived": true
+        },
+        {
+          "label": "research_fingerprint",
+          "source": "gp_research::research_implementation_fingerprint",
+          "derived": true
+        },
+        {
+          "label": "adaptive_screen.rs",
+          "source": "native/gp-core/src/adaptive_screen.rs",
+          "derived": false
+        },
+        {
+          "label": "core/lib.rs",
+          "source": "native/gp-core/src/lib.rs",
+          "derived": false
+        },
+        {
+          "label": "lib.rs",
+          "source": "desktop/src-tauri/src/lib.rs",
+          "derived": false
+        },
+        {
+          "label": "screening.rs",
+          "source": "desktop/src-tauri/src/screening.rs",
+          "derived": false
+        },
+        {
+          "label": "screening_financial_overlay.rs",
+          "source": "desktop/src-tauri/src/screening_financial_overlay.rs",
+          "derived": false
+        },
+        {
+          "label": "metric_units.rs",
+          "source": "desktop/src-tauri/src/metric_units.rs",
+          "derived": false
+        },
+        {
+          "label": "stock_research_runtime.rs",
+          "source": "desktop/src-tauri/src/stock_research_runtime.rs",
+          "derived": false
+        },
+        {
+          "label": "Cargo.toml",
+          "source": "desktop/src-tauri/Cargo.toml",
+          "derived": false
+        },
+        {
+          "label": "Cargo.lock",
+          "source": "desktop/src-tauri/Cargo.lock",
+          "derived": false
+        }
+      ],
+      "all_declared_sources": false
+    }
+  ]
+}

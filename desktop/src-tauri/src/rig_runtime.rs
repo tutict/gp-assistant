@@ -701,7 +701,7 @@ fn build_model_with_evidence_sender(
         env!("CARGO_PKG_VERSION"),
         " rig-agent"
     ));
-    let http_client = crate::market::build_http_client_with_proxy(
+    let http_client = crate::network::http::build_http_client_with_proxy(
         user_agent,
         std::time::Duration::from_secs(config.timeout_seconds),
         (!network_payload.is_null()).then_some(network_payload),
@@ -1442,7 +1442,7 @@ fn bound_hk_observation(mut result: Value, arguments: &Value) -> Result<Value, S
             .get(field)
             .and_then(Value::as_str)
             .map(|raw| {
-                let key = crate::market::compact_date_key(raw)
+                let key = crate::market_domain::dates::compact_date_key(raw)
                     .ok_or_else(|| format!("无效日线日期：{raw}"))?;
                 chrono::NaiveDate::parse_from_str(&key, "%Y%m%d")
                     .map_err(|_| format!("无效日线日期：{raw}"))?;
@@ -1469,7 +1469,7 @@ fn bound_hk_observation(mut result: Value, arguments: &Value) -> Result<Value, S
         history.retain(|bar| {
             bar.get("date")
                 .and_then(Value::as_str)
-                .and_then(crate::market::compact_date_key)
+                .and_then(crate::market_domain::dates::compact_date_key)
                 .is_some_and(|date| {
                     start.as_ref().is_none_or(|start| date >= *start)
                         && end.as_ref().is_none_or(|end| date <= *end)
@@ -2466,7 +2466,7 @@ fn canonical_agent_stock_code(raw: &str, market: &str) -> Option<String> {
     if digits.len() != 6 || !digits.bytes().all(|ch| ch.is_ascii_digit()) {
         return None;
     }
-    let code = crate::market::normalize_stock_code(&raw)?;
+    let code = crate::market_domain::codes::normalize_stock_code(&raw)?;
     (!code.ends_with(".HK")).then_some(code)
 }
 

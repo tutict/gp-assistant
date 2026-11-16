@@ -890,7 +890,7 @@ pub(crate) fn core_upstream_rag_import(
         .get("sha256")
         .and_then(Value::as_str)
         .ok_or_else(|| "manifest 缺少 sha256。".to_string())?;
-    let actual_sha256 = crate::market::sha256_hex(&pack_bytes);
+    let actual_sha256 = crate::wire_values::sha256_hex(&pack_bytes);
     if !expected_sha256.eq_ignore_ascii_case(&actual_sha256) {
         return Err(format!(
             "RAG 包 sha256 校验失败：预期 {expected_sha256}，实际 {actual_sha256}。"
@@ -917,14 +917,14 @@ pub(crate) fn core_upstream_rag_import(
     let pack_version_owned = pack_version.to_string();
 
     let root = upstream_rag_mobile_root(&app)?;
-    let stock_dir = root.join(crate::market::sanitize_path_part(&stock_code_owned));
+    let stock_dir = root.join(crate::wire_values::sanitize_path_part(&stock_code_owned));
     fs::create_dir_all(&stock_dir).map_err(|error| format!("创建 RAG 目录失败：{error}"))?;
 
-    let version_dir = stock_dir.join(crate::market::sanitize_path_part(&pack_version_owned));
+    let version_dir = stock_dir.join(crate::wire_values::sanitize_path_part(&pack_version_owned));
     let tmp_dir = stock_dir.join(format!(
         "{}.tmp-{}",
-        crate::market::sanitize_path_part(&pack_version_owned),
-        crate::market::epoch_millis()
+        crate::wire_values::sanitize_path_part(&pack_version_owned),
+        crate::market_domain::dates::epoch_millis()
     ));
     if tmp_dir.exists() {
         fs::remove_dir_all(&tmp_dir).map_err(|error| format!("清理临时目录失败：{error}"))?;
@@ -944,7 +944,7 @@ pub(crate) fn core_upstream_rag_import(
     );
     manifest.insert(
         "_imported_at_epoch_ms".to_string(),
-        json!(crate::market::epoch_millis()),
+        json!(crate::market_domain::dates::epoch_millis()),
     );
     fs::write(
         &tmp_manifest_path,
@@ -995,15 +995,16 @@ pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, Str
             if !stock_dir.is_dir() {
                 continue;
             }
-            let current_version =
-                crate::market::read_json_file(&stock_dir.join("current_manifest.json"))
-                    .ok()
-                    .and_then(|value| {
-                        value
-                            .get("pack_version")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    });
+            let current_version = crate::market::store::files::read_json_file(
+                &stock_dir.join("current_manifest.json"),
+            )
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("pack_version")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
             for version_entry in fs::read_dir(&stock_dir)
                 .map_err(|error| format!("读取 RAG 版本目录失败：{error}"))?
             {
@@ -1014,7 +1015,7 @@ pub(crate) fn core_upstream_rag_list(app: tauri::AppHandle) -> Result<Value, Str
                     continue;
                 }
                 if let Ok(mut manifest) =
-                    crate::market::read_json_file(&version_dir.join("manifest.json"))
+                    crate::market::store::files::read_json_file(&version_dir.join("manifest.json"))
                 {
                     let pack_version = manifest
                         .get("pack_version")
@@ -1059,17 +1060,17 @@ pub(crate) fn core_upstream_rag_detail(
         .and_then(Value::as_str)
         .unwrap_or("");
     let manifest_path = if !stock_code.is_empty() && !pack_version.is_empty() {
-        root.join(crate::market::sanitize_path_part(stock_code))
-            .join(crate::market::sanitize_path_part(pack_version))
+        root.join(crate::wire_values::sanitize_path_part(stock_code))
+            .join(crate::wire_values::sanitize_path_part(pack_version))
             .join("manifest.json")
     } else if !stock_code.is_empty() {
-        root.join(crate::market::sanitize_path_part(stock_code))
+        root.join(crate::wire_values::sanitize_path_part(stock_code))
             .join("current_manifest.json")
     } else {
-        crate::market::find_first_current_manifest(&root)
+        crate::market::store::files::find_first_current_manifest(&root)
             .ok_or_else(|| "安卓端尚未导入上下游 RAG 包。".to_string())?
     };
-    let manifest = crate::market::read_json_file(&manifest_path)?;
+    let manifest = crate::market::store::files::read_json_file(&manifest_path)?;
     Ok(json!({
         "manifest": manifest,
         "notes": []
@@ -1086,7 +1087,7 @@ pub(crate) fn core_upstream_rag_rollback(
         .get("stock_code")
         .and_then(Value::as_str)
         .ok_or_else(|| "缺少 stock_code。".to_string())?;
-    let stock_dir = root.join(crate::market::sanitize_path_part(stock_code));
+    let stock_dir = root.join(crate::wire_values::sanitize_path_part(stock_code));
     let current_manifest_path = stock_dir.join("current_manifest.json");
     let previous_manifest_path = stock_dir.join("previous_manifest.json");
     if !previous_manifest_path.exists() {
@@ -1101,7 +1102,7 @@ pub(crate) fn core_upstream_rag_rollback(
         fs::write(&previous_manifest_path, bytes)
             .map_err(|error| format!("更新 previous manifest 失败：{error}"))?;
     }
-    let manifest = crate::market::read_json_file(&current_manifest_path)?;
+    let manifest = crate::market::store::files::read_json_file(&current_manifest_path)?;
     Ok(json!({
         "rolled_back": true,
         "manifest": manifest,

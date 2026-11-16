@@ -1,0 +1,18 @@
+{
+  "core": {
+    "tests::adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing_positions": "backtest::tests::adaptive_rebalance_propagates_market_data_errors_instead_of_silently_clearing_positions",
+    "tests::adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_session": "backtest::tests::adaptive_walk_forward_signals_on_the_prior_session_and_trades_on_the_next_session",
+    "tests::calibrated_walk_forward_routes_frozen_weights_with_point_in_time_signals": "backtest::tests::calibrated_walk_forward_routes_frozen_weights_with_point_in_time_signals",
+    "tests::factor_snapshot_is_not_visible_before_its_public_availability_date": "backtest::tests::factor_snapshot_is_not_visible_before_its_public_availability_date",
+    "tests::factor_snapshot_rejects_availability_before_report_date": "backtest::tests::factor_snapshot_rejects_availability_before_report_date",
+    "tests::walk_forward_fold_return_requires_an_exact_end_date_price": "backtest::tests::walk_forward_fold_return_requires_an_exact_end_date_price"
+  },
+  "research": {},
+  "native": {
+    "market::external_market_cache_tests::configured_network_proxy_takes_precedence_without_replacing_provider_proxy_settings": "market::cache::external_market_cache_tests::configured_network_proxy_takes_precedence_without_replacing_provider_proxy_settings",
+    "market::external_market_cache_tests::configured_network_proxy_rejects_embedded_authentication": "market::cache::external_market_cache_tests::configured_network_proxy_rejects_embedded_authentication",
+    "market::external_market_cache_tests::configured_network_proxy_routes_requests_through_the_selected_proxy": "market::cache::external_market_cache_tests::configured_network_proxy_routes_requests_through_the_selected_proxy",
+    "market::external_market_cache_tests::sanitize_path_part_keeps_dot_only_components_inside_cache_root": "market::cache::external_market_cache_tests::sanitize_path_part_keeps_dot_only_components_inside_cache_root",
+    "market::external_market_cache_tests::cache_version_tracks_sqlite_and_legacy_source_changes": "market::cache::external_market_cache_tests::cache_version_tracks_sqlite_and_legacy_source_changes"
+  }
+}

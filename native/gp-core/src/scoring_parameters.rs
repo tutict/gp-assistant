@@ -25,6 +25,146 @@ pub fn scoring_implementation_fingerprint() -> &'static str {
                 b"gp-core-scoring-implementation/v2-lf\0",
                 &[
                     ("lib.rs", include_bytes!("lib.rs").as_slice()),
+                    ("error.rs", include_bytes!("error.rs").as_slice()),
+                    ("dates.rs", include_bytes!("dates.rs").as_slice()),
+                    ("numeric.rs", include_bytes!("numeric.rs").as_slice()),
+                    (
+                        "market_data.rs",
+                        include_bytes!("market_data.rs").as_slice(),
+                    ),
+                    (
+                        "capital_evidence.rs",
+                        include_bytes!("capital_evidence.rs").as_slice(),
+                    ),
+                    (
+                        "capital_evidence/types.rs",
+                        include_bytes!("capital_evidence/types.rs").as_slice(),
+                    ),
+                    (
+                        "data_source.rs",
+                        include_bytes!("data_source.rs").as_slice(),
+                    ),
+                    ("demo_data.rs", include_bytes!("demo_data.rs").as_slice()),
+                    ("screening.rs", include_bytes!("screening.rs").as_slice()),
+                    (
+                        "screening/types.rs",
+                        include_bytes!("screening/types.rs").as_slice(),
+                    ),
+                    (
+                        "screening/criteria.rs",
+                        include_bytes!("screening/criteria.rs").as_slice(),
+                    ),
+                    (
+                        "screening/classification.rs",
+                        include_bytes!("screening/classification.rs").as_slice(),
+                    ),
+                    (
+                        "screening/scoring.rs",
+                        include_bytes!("screening/scoring.rs").as_slice(),
+                    ),
+                    (
+                        "screening/grouping.rs",
+                        include_bytes!("screening/grouping.rs").as_slice(),
+                    ),
+                    (
+                        "screening/service.rs",
+                        include_bytes!("screening/service.rs").as_slice(),
+                    ),
+                    (
+                        "graph_compat.rs",
+                        include_bytes!("graph_compat.rs").as_slice(),
+                    ),
+                    (
+                        "graph_compat/types.rs",
+                        include_bytes!("graph_compat/types.rs").as_slice(),
+                    ),
+                    (
+                        "graph_compat/service.rs",
+                        include_bytes!("graph_compat/service.rs").as_slice(),
+                    ),
+                    ("text.rs", include_bytes!("text.rs").as_slice()),
+                    (
+                        "backtest/request.rs",
+                        include_bytes!("backtest/request.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/types.rs",
+                        include_bytes!("backtest/types.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/history.rs",
+                        include_bytes!("backtest/history.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/selection.rs",
+                        include_bytes!("backtest/selection.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/simulation.rs",
+                        include_bytes!("backtest/simulation.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/metrics.rs",
+                        include_bytes!("backtest/metrics.rs").as_slice(),
+                    ),
+                    (
+                        "backtest/service.rs",
+                        include_bytes!("backtest/service.rs").as_slice(),
+                    ),
+                    (
+                        "release_gate.rs",
+                        include_bytes!("release_gate.rs").as_slice(),
+                    ),
+                    ("backtest.rs", include_bytes!("backtest.rs").as_slice()),
+                    (
+                        "trend/types.rs",
+                        include_bytes!("trend/types.rs").as_slice(),
+                    ),
+                    (
+                        "trend/indicators.rs",
+                        include_bytes!("trend/indicators.rs").as_slice(),
+                    ),
+                    (
+                        "trend/service.rs",
+                        include_bytes!("trend/service.rs").as_slice(),
+                    ),
+                    (
+                        "trend_screen/types.rs",
+                        include_bytes!("trend_screen/types.rs").as_slice(),
+                    ),
+                    (
+                        "trend_screen/rules.rs",
+                        include_bytes!("trend_screen/rules.rs").as_slice(),
+                    ),
+                    (
+                        "trend_screen/service.rs",
+                        include_bytes!("trend_screen/service.rs").as_slice(),
+                    ),
+                    (
+                        "observation/types.rs",
+                        include_bytes!("observation/types.rs").as_slice(),
+                    ),
+                    (
+                        "observation/financial.rs",
+                        include_bytes!("observation/financial.rs").as_slice(),
+                    ),
+                    (
+                        "observation/capital.rs",
+                        include_bytes!("observation/capital.rs").as_slice(),
+                    ),
+                    (
+                        "observation/service.rs",
+                        include_bytes!("observation/service.rs").as_slice(),
+                    ),
+                    ("trend.rs", include_bytes!("trend.rs").as_slice()),
+                    (
+                        "trend_screen.rs",
+                        include_bytes!("trend_screen.rs").as_slice(),
+                    ),
+                    (
+                        "observation.rs",
+                        include_bytes!("observation.rs").as_slice(),
+                    ),
                     (
                         "adaptive_screen.rs",
                         include_bytes!("adaptive_screen.rs").as_slice(),
@@ -39,6 +179,64 @@ pub fn scoring_implementation_fingerprint() -> &'static str {
                         include_bytes!("scoring_parameters.rs").as_slice(),
                     ),
                     ("volatility.rs", include_bytes!("volatility.rs").as_slice()),
+                    (
+                        "agent/types.rs",
+                        include_bytes!("agent/types.rs").as_slice(),
+                    ),
+                    (
+                        "agent/registry.rs",
+                        include_bytes!("agent/registry.rs").as_slice(),
+                    ),
+                    (
+                        "agent/intent.rs",
+                        include_bytes!("agent/intent.rs").as_slice(),
+                    ),
+                    (
+                        "agent/response.rs",
+                        include_bytes!("agent/response.rs").as_slice(),
+                    ),
+                    (
+                        "agent/stock_summary.rs",
+                        include_bytes!("agent/stock_summary.rs").as_slice(),
+                    ),
+                    (
+                        "agent/service.rs",
+                        include_bytes!("agent/service.rs").as_slice(),
+                    ),
+                    (
+                        "agent/stream.rs",
+                        include_bytes!("agent/stream.rs").as_slice(),
+                    ),
+                    (
+                        "agent/context.rs",
+                        include_bytes!("agent/context.rs").as_slice(),
+                    ),
+                    (
+                        "mobile_skill/types.rs",
+                        include_bytes!("mobile_skill/types.rs").as_slice(),
+                    ),
+                    (
+                        "mobile_skill/rules.rs",
+                        include_bytes!("mobile_skill/rules.rs").as_slice(),
+                    ),
+                    (
+                        "mobile_skill/service.rs",
+                        include_bytes!("mobile_skill/service.rs").as_slice(),
+                    ),
+                    (
+                        "json_api/requests.rs",
+                        include_bytes!("json_api/requests.rs").as_slice(),
+                    ),
+                    (
+                        "json_api/adapters.rs",
+                        include_bytes!("json_api/adapters.rs").as_slice(),
+                    ),
+                    ("agent.rs", include_bytes!("agent.rs").as_slice()),
+                    (
+                        "mobile_skill.rs",
+                        include_bytes!("mobile_skill.rs").as_slice(),
+                    ),
+                    ("json_api.rs", include_bytes!("json_api.rs").as_slice()),
                     ("ffi.rs", include_bytes!("ffi.rs").as_slice()),
                     (
                         "source_fingerprint.rs",

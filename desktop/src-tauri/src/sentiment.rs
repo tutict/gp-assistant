@@ -14,7 +14,7 @@ fn runs() -> &'static Mutex<HashMap<String, Value>> {
     RUNS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 fn now() -> i64 {
-    crate::market::epoch_millis() as i64
+    crate::market_domain::dates::epoch_millis() as i64
 }
 fn id() -> String {
     crate::agent_ledger::next_run_id()
@@ -49,8 +49,8 @@ fn code(v: &Value) -> Result<String, String> {
         }
         return Ok(format!("{digits:0>5}.HK"));
     }
-    let code =
-        crate::market::normalize_stock_code(raw).ok_or_else(|| "股票代码无效".to_string())?;
+    let code = crate::market_domain::codes::normalize_stock_code(raw)
+        .ok_or_else(|| "股票代码无效".to_string())?;
     if code.ends_with(".HK") {
         return Err("港股代码需要 market=hk".into());
     }
@@ -322,7 +322,8 @@ fn code_list(payload: &Value, market: &str) -> Result<Vec<String>, String> {
                 })
                 .map(|digits| format!("{digits:0>5}.HK"))
         } else {
-            crate::market::normalize_stock_code(text).filter(|code| !code.ends_with(".HK"))
+            crate::market_domain::codes::normalize_stock_code(text)
+                .filter(|code| !code.ends_with(".HK"))
         };
         let Some(code) = normalized else {
             continue;

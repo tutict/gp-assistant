@@ -476,7 +476,8 @@ pub(crate) fn reusable_context(
     }
     let timestamp = value.get("snapshot_at_epoch_ms")?.as_u64()?;
     if timestamp == 0
-        || u128::from(timestamp) > crate::market::epoch_millis().saturating_add(5 * 60 * 1000)
+        || u128::from(timestamp)
+            > crate::market_domain::dates::epoch_millis().saturating_add(5 * 60 * 1000)
     {
         return None;
     }
@@ -655,7 +656,7 @@ pub(crate) fn attach_evidence(mut response: Value, evidence: &Value, stock_code:
     response["evidence_summary"] = json!(catalog);
     response["market"] = json!("hk");
     response["research_context"] = json!({"market":"hk","stock_code":stock_code,
-        "snapshot_at_epoch_ms":crate::market::epoch_millis(),"evidence":catalog,"data_gaps":gaps,"reused":false});
+        "snapshot_at_epoch_ms":crate::market_domain::dates::epoch_millis(),"evidence":catalog,"data_gaps":gaps,"reused":false});
     if !bullets.is_empty() {
         response["reply"] = json!(format!(
             "已整理 {stock_code} 的本地研究证据，结论与来源可逐项核对。[E1]"

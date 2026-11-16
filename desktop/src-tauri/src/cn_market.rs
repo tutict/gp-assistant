@@ -51,10 +51,11 @@ fn company_profile_request(
 }
 
 fn cn_company_profile_code(raw: &str) -> Result<String, String> {
-    crate::market::normalize_stock_code(raw)
+    crate::market_domain::codes::normalize_stock_code(raw)
         .filter(|code| {
             code.split_once('.').is_some_and(|(digits, market)| {
-                crate::market::valid_digits(digits) && matches!(market, "SH" | "SZ" | "BJ")
+                crate::market_domain::codes::valid_digits(digits)
+                    && matches!(market, "SH" | "SZ" | "BJ")
             })
         })
         .ok_or_else(|| "请输入有效 A 股代码。".to_owned())
@@ -270,24 +271,26 @@ pub(crate) async fn api_cn_company_profile(
         .map_err(|error| error.to_string())?
         .join("cn-company-profiles")
         .join(format!("{code}.json"));
-    let fetched_at = crate::market::epoch_millis().to_string();
+    let fetched_at = crate::market_domain::dates::epoch_millis().to_string();
     let refresh = payload
         .get("refresh")
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let fetch = async {
         let work = crate::runtime::with_heavy_network_permit("api_cn_company_profile", async {
-            let preferred = crate::market::build_http_client_with_proxy(
+            let preferred = crate::network::http::build_http_client_with_proxy(
                 "Mozilla/5.0 GuXuanYou cn-company-profile",
                 Duration::from_secs(6),
                 Some(&payload),
             )?;
-            let direct = crate::market::build_direct_http_client(
+            let direct = crate::network::http::build_direct_http_client(
                 "Mozilla/5.0 GuXuanYou cn-company-profile",
                 Duration::from_secs(6),
             )?;
-            let mut url = reqwest::Url::parse(crate::market::EASTMONEY_SECURITIES_ENDPOINT)
-                .expect("fixed public endpoint");
+            let mut url = reqwest::Url::parse(
+                crate::market::providers::eastmoney::EASTMONEY_SECURITIES_ENDPOINT,
+            )
+            .expect("fixed public endpoint");
             url.query_pairs_mut()
                 .append_pair("reportName", "RPT_F10_ORG_BASICINFO")
                 .append_pair(
@@ -325,7 +328,7 @@ fn supplement_report_metrics(reports: &mut Map<String, Value>, rows: &[Value]) -
             continue;
         };
         let period = text(row, "REPORTDATE")
-            .and_then(|date| crate::market::financial_period_from_text(&date));
+            .and_then(|date| crate::market_domain::financial::financial_period_from_text(&date));
         let notice = text(row, "NOTICE_DATE").map(|date| date.chars().take(10).collect::<String>());
         if report.get("currency").and_then(Value::as_str) != Some("CNY")
             || period.as_deref() != report.get("period").and_then(Value::as_str)
@@ -335,10 +338,10 @@ fn supplement_report_metrics(reports: &mut Map<String, Value>, rows: &[Value]) -
         }
         let mut fields = Vec::new();
         for (target, source) in [("latest_eps", "BASIC_EPS"), ("roe", "WEIGHTAVG_ROE")] {
-            if crate::market::json_f64(report.get(target)).is_none() {
+            if crate::wire_values::json_f64(report.get(target)).is_none() {
                 if let Some(value) = row
                     .get(source)
-                    .and_then(|value| crate::market::json_f64(Some(value)))
+                    .and_then(|value| crate::wire_values::json_f64(Some(value)))
                 {
                     report.insert(target.to_string(), json!(value));
                     fields.push(target);
@@ -438,7 +441,7 @@ fn text(value: &Value, field: &str) -> Option<String> {
 
 fn listed_on(listing_date: Option<&str>, as_of: &str) -> bool {
     listing_date
-        .and_then(crate::market::compact_date_key)
+        .and_then(crate::market_domain::dates::compact_date_key)
         .is_some_and(|date| date.as_str() <= as_of)
 }
 
@@ -474,7 +477,7 @@ pub(crate) fn parse_sse_directory(value: &Value, as_of: &str) -> Result<Vec<Valu
             continue;
         }
         let code = text(row, "A_STOCK_CODE")
-            .filter(|code| crate::market::valid_digits(code))
+            .filter(|code| crate::market_domain::codes::valid_digits(code))
             .ok_or("上交所 A 股目录包含无效代码")?;
         let name = text(row, "SEC_NAME_CN")
             .or_else(|| text(row, "COMPANY_ABBR"))
@@ -580,17 +583,18 @@ pub(crate) fn parse_financial_reports(
             continue;
         };
         if !code.split_once('.').is_some_and(|(digits, exchange)| {
-            crate::market::valid_digits(digits) && matches!(exchange, "SH" | "SZ" | "BJ")
+            crate::market_domain::codes::valid_digits(digits)
+                && matches!(exchange, "SH" | "SZ" | "BJ")
         }) {
             continue;
         }
-        let Some(report_date) =
-            text(row, "REPORT_DATE").and_then(|date| crate::market::compact_date_key(&date))
+        let Some(report_date) = text(row, "REPORT_DATE")
+            .and_then(|date| crate::market_domain::dates::compact_date_key(&date))
         else {
             continue;
         };
-        let Some(notice_date) =
-            text(row, "NOTICE_DATE").and_then(|date| crate::market::compact_date_key(&date))
+        let Some(notice_date) = text(row, "NOTICE_DATE")
+            .and_then(|date| crate::market_domain::dates::compact_date_key(&date))
         else {
             continue;
         };
@@ -601,10 +605,10 @@ pub(crate) fn parse_financial_reports(
         let replace = reports.get(&code).is_none_or(|current| {
             rank > (
                 text(current, "REPORT_DATE")
-                    .and_then(|date| crate::market::compact_date_key(&date))
+                    .and_then(|date| crate::market_domain::dates::compact_date_key(&date))
                     .unwrap_or_default(),
                 text(current, "NOTICE_DATE")
-                    .and_then(|date| crate::market::compact_date_key(&date))
+                    .and_then(|date| crate::market_domain::dates::compact_date_key(&date))
                     .unwrap_or_default(),
             )
         });
@@ -618,8 +622,9 @@ pub(crate) fn parse_financial_reports(
             let wrapper = json!({"result":{"data":[row]}});
             let mut fields =
                 crate::observe::parse_latest_observe_financial_snapshot(&wrapper, &code).ok()?;
-            let period = text(row, "REPORT_DATE")
-                .and_then(|date| crate::market::financial_period_from_text(&date))?;
+            let period = text(row, "REPORT_DATE").and_then(|date| {
+                crate::market_domain::financial::financial_period_from_text(&date)
+            })?;
             fields.insert("period".into(), json!(period));
             fields.insert("source".into(), json!(FINANCIAL_SOURCE));
             fields.insert("report_fetched_at".into(), json!(fetched_at));
@@ -640,7 +645,7 @@ pub(crate) fn apply_reference_data(
     financials: Map<String, Value>,
     fetched_at: &str,
 ) {
-    let (mut stocks, _) = crate::market::seed_stock_maps(seed);
+    let (mut stocks, _) = crate::market_domain::datasets::seed_stock_maps(seed);
     if !directory.is_empty() {
         let current: HashSet<String> = directory
             .iter()
@@ -681,7 +686,7 @@ pub(crate) fn apply_reference_data(
                     "industry".into(),
                     item.get("industry")
                         .cloned()
-                        .unwrap_or_else(|| json!(crate::market::board_label(&code))),
+                        .unwrap_or_else(|| json!(crate::market_domain::codes::board_label(&code))),
                 );
             }
             if stock
@@ -720,7 +725,7 @@ pub(crate) fn apply_reference_data(
         .unwrap_or_default();
     for (code, mut entry) in financials {
         entry["report_fetched_at"] = json!(fetched_at);
-        crate::market::merge_financial_entry(&mut entries, &code, &entry);
+        crate::market_domain::financial::merge_financial_entry(&mut entries, &code, &entry);
     }
     for (code, stock) in &mut stocks {
         let Some(entry) = entries
@@ -854,8 +859,9 @@ fn financial_url(
     columns: &str,
     latest: bool,
 ) -> String {
-    let mut url = reqwest::Url::parse(crate::market::EASTMONEY_SECURITIES_ENDPOINT)
-        .expect("fixed public endpoint");
+    let mut url =
+        reqwest::Url::parse(crate::market::providers::eastmoney::EASTMONEY_SECURITIES_ENDPOINT)
+            .expect("fixed public endpoint");
     url.query_pairs_mut()
         .append_pair("reportName", "RPT_F10_FINANCE_MAINFINADATA")
         .append_pair("columns", columns)
@@ -910,8 +916,10 @@ async fn fetch_report_supplements(
                 .collect::<Vec<_>>()
                 .join(",");
             let filter = format!("(REPORTDATE='{year}-{end}')(SECUCODE in ({codes}))");
-            let mut url = reqwest::Url::parse(crate::market::EASTMONEY_DATACENTER_ENDPOINT)
-                .expect("fixed public endpoint");
+            let mut url = reqwest::Url::parse(
+                crate::market::providers::eastmoney::EASTMONEY_DATACENTER_ENDPOINT,
+            )
+            .expect("fixed public endpoint");
             url.query_pairs_mut()
                 .append_pair("reportName", "RPT_LICO_FN_CPD")
                 .append_pair(
@@ -931,12 +939,16 @@ async fn fetch_report_supplements(
             )
             .await
             .and_then(|value| {
-                crate::market::normalize_eastmoney_public_json(value, "同报告期业绩报告", true)
+                crate::market::providers::eastmoney::normalize_eastmoney_public_json(
+                    value,
+                    "同报告期业绩报告",
+                    true,
+                )
             }) {
                 Ok(value) => {
                     supplement_report_metrics(
                         reports,
-                        crate::market::eastmoney_result_rows(&value),
+                        crate::market::providers::eastmoney::eastmoney_result_rows(&value),
                     );
                 }
                 Err(error) => errors.push(error),
@@ -1033,7 +1045,7 @@ async fn fetch_beijing_directory(
         return Err("北交所行情目录分页不完整，保留已有目录".to_string());
     }
     let directory: Vec<Value> = rows.into_iter().filter_map(|row| {
-        let code = text(&row,"f12").filter(|code| code.starts_with("92") && crate::market::valid_digits(code))?;
+        let code = text(&row,"f12").filter(|code| code.starts_with("92") && crate::market_domain::codes::valid_digits(code))?;
         let listing_date = row.get("f26").and_then(Value::as_u64).map(|date| date.to_string())
             .or_else(|| text(&row,"f26"));
         Some(json!({"code":format!("{code}.BJ"),"name":text(&row,"f14"),"industry":"北交所",
@@ -1084,8 +1096,9 @@ async fn fetch_session_calendar(
     )
     .await?;
     let script = String::from_utf8(script).map_err(|error| error.to_string())?;
-    let mut url = reqwest::Url::parse(crate::market::TENCENT_DAILY_KLINE_ENDPOINT)
-        .expect("fixed Tencent history endpoint");
+    let mut url =
+        reqwest::Url::parse(crate::market::providers::tencent::TENCENT_DAILY_KLINE_ENDPOINT)
+            .expect("fixed Tencent history endpoint");
     url.query_pairs_mut()
         .append_pair("param", "sh000001,day,,,180,qfq");
     let sessions = fetch_json(preferred, direct, url.as_str(), "https://gu.qq.com/").await?;
@@ -1117,13 +1130,17 @@ async fn fetch_financial_batch(
         "https://emweb.securities.eastmoney.com/",
     )
     .await?;
-    let latest = crate::market::normalize_eastmoney_public_json(latest, "A 股最新报告期", false)?;
-    let report_date = crate::market::eastmoney_result_rows(&latest)
+    let latest = crate::market::providers::eastmoney::normalize_eastmoney_public_json(
+        latest,
+        "A 股最新报告期",
+        false,
+    )?;
+    let report_date = crate::market::providers::eastmoney::eastmoney_result_rows(&latest)
         .first()
         .and_then(|row| text(row, "REPORT_DATE"))
-        .and_then(|date| crate::market::normalize_history_date(&date))
+        .and_then(|date| crate::market_domain::dates::normalize_history_date(&date))
         .ok_or("A 股财报接口没有已公开的报告期")?;
-    let period = crate::market::financial_period_from_text(&report_date)
+    let period = crate::market_domain::financial::financial_period_from_text(&report_date)
         .ok_or("A 股财报接口报告期无法识别")?;
     let filter = format!("(REPORT_DATE='{report_date}')");
     let first = fetch_json(
@@ -1133,7 +1150,11 @@ async fn fetch_financial_batch(
         "https://emweb.securities.eastmoney.com/",
     )
     .await?;
-    let first = crate::market::normalize_eastmoney_public_json(first, "A 股全市场财报", false)?;
+    let first = crate::market::providers::eastmoney::normalize_eastmoney_public_json(
+        first,
+        "A 股全市场财报",
+        false,
+    )?;
     let count = first
         .pointer("/result/count")
         .and_then(Value::as_u64)
@@ -1144,7 +1165,7 @@ async fn fetch_financial_batch(
         .and_then(Value::as_u64)
         .filter(|pages| *pages as usize == count.div_ceil(PAGE_SIZE))
         .ok_or("A 股财报接口分页信息不一致")? as usize;
-    let mut rows = crate::market::eastmoney_result_rows(&first).to_vec();
+    let mut rows = crate::market::providers::eastmoney::eastmoney_result_rows(&first).to_vec();
     let results = stream::iter(2..=pages)
         .map(|page| {
             let filter = &filter;
@@ -1167,12 +1188,18 @@ async fn fetch_financial_batch(
     let mut errors = Vec::new();
     for (page, result) in results {
         match result.and_then(|value| {
-            crate::market::normalize_eastmoney_public_json(value, "A 股财报分页", false)
+            crate::market::providers::eastmoney::normalize_eastmoney_public_json(
+                value,
+                "A 股财报分页",
+                false,
+            )
         }) {
             Ok(value)
                 if value.pointer("/result/count").and_then(Value::as_u64) == Some(count as u64) =>
             {
-                rows.extend(crate::market::eastmoney_result_rows(&value).to_vec())
+                rows.extend(
+                    crate::market::providers::eastmoney::eastmoney_result_rows(&value).to_vec(),
+                )
             }
             Ok(_) => errors.push(format!("财报第 {page} 页总数变化，稍后重试")),
             Err(error) => errors.push(format!("财报第 {page} 页：{error}")),
@@ -1201,20 +1228,22 @@ async fn prepare_reference_data(
     seed: &mut Value,
     payload: &Value,
 ) -> Result<Value, String> {
-    let fetched_at = crate::market::epoch_millis().to_string();
-    let as_of = crate::market::local_yyyymmdd_from_epoch_ms(crate::market::epoch_millis())
-        .ok_or("无法读取当前日期")?;
-    let preferred = crate::market::build_http_client_with_proxy(
+    let fetched_at = crate::market_domain::dates::epoch_millis().to_string();
+    let as_of = crate::market_domain::dates::local_yyyymmdd_from_epoch_ms(
+        crate::market_domain::dates::epoch_millis(),
+    )
+    .ok_or("无法读取当前日期")?;
+    let preferred = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou cn-financial-refresh",
         Duration::from_secs(8),
         Some(payload),
     )?;
-    let direct = crate::market::build_direct_http_client(
+    let direct = crate::network::http::build_direct_http_client(
         "Mozilla/5.0 GuXuanYou cn-financial-refresh",
         Duration::from_secs(8),
     )?;
     if let Some(app) = app {
-        crate::market::emit_market_refresh_log(app, "cn_reference_start", "info", json!({}));
+        crate::market_events::emit_market_refresh_log(app, "cn_reference_start", "info", json!({}));
     }
     let work = async {
         let (directory, batch, calendar) = tokio::join!(
@@ -1232,7 +1261,7 @@ async fn prepare_reference_data(
         };
         let codes: HashSet<String> = if directory.is_empty() {
             directory_candidate_codes(seed)
-                .unwrap_or_else(|| crate::market::seed_stock_maps(seed).1)
+                .unwrap_or_else(|| crate::market_domain::datasets::seed_stock_maps(seed).1)
                 .into_iter()
                 .collect()
         } else {
@@ -1289,10 +1318,14 @@ async fn prepare_reference_data(
             .await;
         for (code, result) in results {
             match result.and_then(|value| {
-                crate::market::normalize_eastmoney_public_json(value, "A 股单证券财报", true)
+                crate::market::providers::eastmoney::normalize_eastmoney_public_json(
+                    value,
+                    "A 股单证券财报",
+                    true,
+                )
             }) {
                 Ok(value) => reports.extend(parse_financial_reports(
-                    crate::market::eastmoney_result_rows(&value),
+                    crate::market::providers::eastmoney::eastmoney_result_rows(&value),
                     &HashSet::from([code]),
                     &as_of,
                     &fetched_at,
@@ -1323,7 +1356,7 @@ async fn prepare_reference_data(
         let result = json!({"directory_count":directory.len(),"financial_fetched":fetched,"financial_requested":codes.len(),
             "report_period":period,"failed":!errors.is_empty(),"errors":errors});
         if let Some(app) = app {
-            crate::market::emit_market_refresh_log(
+            crate::market_events::emit_market_refresh_log(
                 app,
                 "cn_reference_complete",
                 if errors.is_empty() { "ok" } else { "warn" },
@@ -1337,7 +1370,7 @@ async fn prepare_reference_data(
         Err(_) => {
             let error = "A 股目录与财报更新超时，保留已有缓存";
             if let Some(app) = app {
-                crate::market::emit_market_refresh_log(
+                crate::market_events::emit_market_refresh_log(
                     app,
                     "cn_reference_complete",
                     "warn",
@@ -1871,9 +1904,11 @@ mod tests {
             summary["financial_fetched"].as_u64().unwrap_or(0) > 5000,
             "{summary}"
         );
-        let (typed, _) =
-            crate::market::parse_mobile_market_data_snapshot(&seed, "CN live reference probe")
-                .unwrap();
+        let (typed, _) = crate::market_domain::datasets::parse_mobile_market_data_snapshot(
+            &seed,
+            "CN live reference probe",
+        )
+        .unwrap();
         let count = typed.stocks.len();
         let financial_count = typed
             .stocks

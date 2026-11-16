@@ -308,7 +308,11 @@ mod tests {
         let path = root.join("market.json");
         let temporary = root.join("market.tmp");
         fs::write(&path, br#"{"stocks":[]}"#).unwrap();
-        let result = crate::market::write_mobile_market_data_once(&temporary, &path, b"{truncated");
+        let result = crate::market::store::files::write_mobile_market_data_once(
+            &temporary,
+            &path,
+            b"{truncated",
+        );
         assert!(
             result.is_err(),
             "invalid JSON must fail before replacing the valid snapshot"

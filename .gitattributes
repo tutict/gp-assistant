@@ -1,3 +1,6 @@
 # Frozen evaluation hashes must match across Windows and Linux checkouts.
 evals/deepeval/*.jsonl text eol=lf
 evals/deepeval/*_manifest.json text eol=lf
+
+# PIT bundles are byte-addressed; checkout must not rewrite their payloads.
+native/gp-research/tests/fixtures/** -text whitespace=cr-at-eol

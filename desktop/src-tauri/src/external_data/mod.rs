@@ -276,7 +276,7 @@ pub(crate) async fn api_data_refresh(
                 .iter()
                 .map(|item| {
                     item.as_str()
-                        .and_then(crate::market::normalize_stock_code)
+                        .and_then(crate::market_domain::codes::normalize_stock_code)
                         .ok_or_else(|| "entity_codes contains an invalid A-share code".to_string())
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -311,7 +311,7 @@ pub(crate) async fn api_data_refresh(
         object.insert("request_id".into(), Value::String(request_id));
         object.insert("data_policy".into(), Value::String("refresh".into()));
     }
-    crate::market::api_market_refresh(app, refresh_payload).await
+    crate::market::commands::api_market_refresh(app, refresh_payload).await
 }
 
 #[tauri::command]

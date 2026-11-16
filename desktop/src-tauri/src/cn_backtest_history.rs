@@ -8,8 +8,8 @@ const PAGE_SIZE: usize = 2000;
 const MAX_PAGES: usize = 8;
 
 pub(super) fn known_through(raw: &Value, epoch_ms: u128) -> Result<String, String> {
-    let today_key =
-        crate::market::local_yyyymmdd_from_epoch_ms(epoch_ms).ok_or("无法确定日线可知日期")?;
+    let today_key = crate::market_domain::dates::local_yyyymmdd_from_epoch_ms(epoch_ms)
+        .ok_or("无法确定日线可知日期")?;
     let today = date(&today_key)?;
     let calendar = raw.pointer("/cn_reference/calendar");
     let nontrading = matches!(today.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun)
@@ -28,7 +28,8 @@ pub(super) fn known_through(raw: &Value, epoch_ms: u128) -> Result<String, Strin
 }
 
 fn date(raw: &str) -> Result<chrono::NaiveDate, String> {
-    let key = crate::market::compact_date_key(raw).ok_or_else(|| format!("无效日线日期：{raw}"))?;
+    let key = crate::market_domain::dates::compact_date_key(raw)
+        .ok_or_else(|| format!("无效日线日期：{raw}"))?;
     chrono::NaiveDate::parse_from_str(&key, "%Y%m%d").map_err(|_| format!("无效日线日期：{raw}"))
 }
 
@@ -70,7 +71,7 @@ fn series(rows: &[gp_core::HistoryBar]) -> Result<(String, String, String), Stri
         .clone();
     let bytes = serde_json::to_vec(&canonical.into_values().collect::<Vec<_>>())
         .map_err(|error| error.to_string())?;
-    Ok((first, last, crate::market::sha256_hex(&bytes)))
+    Ok((first, last, crate::wire_values::sha256_hex(&bytes)))
 }
 
 pub(super) fn evidence(
@@ -80,13 +81,13 @@ pub(super) fn evidence(
     end: &str,
     provider: &str,
 ) -> Result<Value, String> {
-    let code = crate::market::normalize_stock_code(code).ok_or("无效股票代码")?;
+    let code = crate::market_domain::codes::normalize_stock_code(code).ok_or("无效股票代码")?;
     let start = date(start)?.format("%Y%m%d").to_string();
     let end = date(end)?.format("%Y%m%d").to_string();
     let (first, last, hash) = series(rows)?;
-    let fetched_at = crate::market::epoch_millis();
-    let fetched_date =
-        crate::market::local_yyyymmdd_from_epoch_ms(fetched_at).ok_or("无法确定日线抓取日期")?;
+    let fetched_at = crate::market_domain::dates::epoch_millis();
+    let fetched_date = crate::market_domain::dates::local_yyyymmdd_from_epoch_ms(fetched_at)
+        .ok_or("无法确定日线抓取日期")?;
     if start > end
         || first < start
         || last > end
@@ -103,7 +104,7 @@ pub(super) fn evidence(
 }
 
 pub(super) fn listing_date(raw: &Value, code: &str) -> Option<String> {
-    let code = crate::market::normalize_stock_code(code)?;
+    let code = crate::market_domain::codes::normalize_stock_code(code)?;
     raw.get("stocks")
         .and_then(Value::as_array)?
         .iter()
@@ -111,7 +112,7 @@ pub(super) fn listing_date(raw: &Value, code: &str) -> Option<String> {
             stock
                 .get("code")
                 .and_then(Value::as_str)
-                .and_then(crate::market::normalize_stock_code)
+                .and_then(crate::market_domain::codes::normalize_stock_code)
                 .as_ref()
                 == Some(&code)
         })?
@@ -151,7 +152,8 @@ pub(super) fn coverage(
     let mut items = super::local_history_coverage(data, overrides, codes, start, end, minimum);
     for item in &mut items {
         let code = item["code"].as_str().unwrap_or_default().to_string();
-        let normalized = crate::market::normalize_stock_code(&code).unwrap_or_else(|| code.clone());
+        let normalized = crate::market_domain::codes::normalize_stock_code(&code)
+            .unwrap_or_else(|| code.clone());
         let rows = overrides
             .get(&code)
             .or_else(|| overrides.get(&normalized))
@@ -175,7 +177,7 @@ pub(super) fn coverage(
                 && matches!(proof["provider"].as_str(), Some("tencent" | "eastmoney"))
                 && proof["fetched_at_epoch_ms"].as_u64().is_some_and(|time| {
                     time > 0
-                        && time as u128 <= crate::market::epoch_millis()
+                        && time as u128 <= crate::market_domain::dates::epoch_millis()
                         && known_through(raw, time as u128).is_ok_and(|known| {
                             proof["coverage_known_through"]
                                 .as_str()
@@ -237,7 +239,7 @@ fn parse_tencent_page(
     code: &str,
     cursor: chrono::NaiveDate,
 ) -> Result<Vec<gp_core::HistoryBar>, String> {
-    let symbol = crate::market::tencent_symbol(code).ok_or("无效股票代码")?;
+    let symbol = crate::market_domain::codes::tencent_symbol(code).ok_or("无效股票代码")?;
     let value: Value =
         serde_json::from_str(text).map_err(|error| format!("腾讯日线响应无效：{error}"))?;
     if value["code"] != 0 {
@@ -250,7 +252,7 @@ fn parse_tencent_page(
     let rows = raw
         .iter()
         .map(|row| {
-            crate::market::parse_tencent_kline_row(row)
+            crate::market_domain::history::parse_tencent_kline_row(row)
                 .ok_or_else(|| "腾讯日线包含无效数据".to_string())
                 .and_then(|row| {
                     serde_json::from_value::<gp_core::HistoryBar>(row)
@@ -324,7 +326,7 @@ async fn tencent_range(
     start: chrono::NaiveDate,
     end: chrono::NaiveDate,
 ) -> Result<Vec<gp_core::HistoryBar>, String> {
-    let symbol = crate::market::tencent_symbol(code).ok_or("无效股票代码")?;
+    let symbol = crate::market_domain::codes::tencent_symbol(code).ok_or("无效股票代码")?;
     collect_tencent_range(start, end, |cursor| {
         let param = format!("{symbol},day,,{},{PAGE_SIZE},", cursor.format("%Y-%m-%d"));
         let encoded =
@@ -358,7 +360,7 @@ async fn eastmoney_range(
     start: chrono::NaiveDate,
     end: chrono::NaiveDate,
 ) -> Result<Vec<gp_core::HistoryBar>, String> {
-    let market = crate::market::eastmoney_market_code(code).ok_or("无效股票代码")?;
+    let market = crate::market_domain::codes::eastmoney_market_code(code).ok_or("无效股票代码")?;
     let digits = code.get(..6).ok_or("无效股票代码")?;
     let url = format!("https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=7eea3edcaed734bea9cbfc24409ed989&klt=101&fqt=0&secid={market}.{digits}&beg={}&end={}&lmt=100000", start.format("%Y%m%d"), end.format("%Y%m%d"));
     let text = response_text(client, &url).await?;
@@ -378,7 +380,7 @@ async fn eastmoney_range(
     raw.iter()
         .map(|row| {
             row.as_str()
-                .and_then(crate::market::parse_eastmoney_kline_row)
+                .and_then(crate::market_domain::history::parse_eastmoney_kline_row)
                 .ok_or_else(|| "东方财富日线包含无效数据".to_string())
                 .and_then(|row| serde_json::from_value(row).map_err(|error| error.to_string()))
         })
@@ -406,7 +408,7 @@ pub(super) async fn fetch_range(
     if effective_start > end_day {
         return Err("所选回测区间早于该股票上市日期".to_string());
     }
-    let client = crate::market::build_tencent_http_client(
+    let client = crate::network::http::build_tencent_http_client(
         "Mozilla/5.0 GuXuanYou/0.3 backtest range",
         Duration::from_secs(8),
     )?;
@@ -598,11 +600,17 @@ mod tests {
             "tencent"
         )
         .is_err());
-        let morning = crate::market::parse_cache_datetime_epoch_ms("2026-11-09T02:00:00Z").unwrap();
+        let morning =
+            crate::market_domain::dates::parse_cache_datetime_epoch_ms("2026-11-09T02:00:00Z")
+                .unwrap();
         assert_eq!(known_through(&json!({}), morning).unwrap(), "20261108");
-        let closed = crate::market::parse_cache_datetime_epoch_ms("2026-11-09T08:00:00Z").unwrap();
+        let closed =
+            crate::market_domain::dates::parse_cache_datetime_epoch_ms("2026-11-09T08:00:00Z")
+                .unwrap();
         assert_eq!(known_through(&json!({}), closed).unwrap(), "20261109");
-        let sunday = crate::market::parse_cache_datetime_epoch_ms("2026-11-08T02:00:00Z").unwrap();
+        let sunday =
+            crate::market_domain::dates::parse_cache_datetime_epoch_ms("2026-11-08T02:00:00Z")
+                .unwrap();
         assert_eq!(known_through(&json!({}), sunday).unwrap(), "20261108");
         let mut proof = evidence(
             "300750.SZ",

@@ -33,7 +33,7 @@ struct LlmDiagnosticContext {
 impl LlmDiagnosticContext {
     fn new(payload: &Value) -> Self {
         Self {
-            started_at: crate::market::epoch_millis(),
+            started_at: crate::market_domain::dates::epoch_millis(),
             api_format: llm_api_format(payload),
             endpoint: None,
             secrets: payload
@@ -86,7 +86,7 @@ impl LlmDiagnosticContext {
             message,
             status: None,
             endpoint,
-            elapsed_ms: crate::market::epoch_millis().saturating_sub(self.started_at),
+            elapsed_ms: crate::market_domain::dates::epoch_millis().saturating_sub(self.started_at),
             api_format: self.api_format,
         }
     }
@@ -113,7 +113,7 @@ impl LlmDiagnosticContext {
 }
 
 fn llm_diagnostic_timeout(payload: &Value) -> u64 {
-    crate::market::payload_usize_field(payload, "timeout_seconds", 60, 10, 180) as u64
+    crate::wire_values::payload_usize_field(payload, "timeout_seconds", 60, 10, 180) as u64
 }
 async fn read_llm_diagnostic_response(
     response: reqwest::Response,
@@ -141,7 +141,7 @@ async fn read_llm_diagnostic_response(
     }
     if response
         .content_length()
-        .is_some_and(|bytes| bytes > crate::market::LLM_MODEL_LIST_MAX_BYTES as u64)
+        .is_some_and(|bytes| bytes > crate::network::http::LLM_MODEL_LIST_MAX_BYTES as u64)
     {
         return Err(context.response_error(
             status_number,
@@ -157,7 +157,7 @@ async fn read_llm_diagnostic_response(
             diagnostic.status = Some(status_number);
             diagnostic
         })?;
-        if body.len().saturating_add(chunk.len()) > crate::market::LLM_MODEL_LIST_MAX_BYTES {
+        if body.len().saturating_add(chunk.len()) > crate::network::http::LLM_MODEL_LIST_MAX_BYTES {
             return Err(context.response_error(
                 status_number,
                 "invalid_response",
@@ -206,7 +206,7 @@ pub(crate) async fn api_llm_models(payload: Value) -> Result<Value, LlmDiagnosti
     if user_agent.len() > 256 || user_agent.contains(['\r', '\n']) {
         return Err(context.error("invalid_config", "自定义 User-Agent 格式不正确。"));
     }
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         user_agent,
         Duration::from_secs(llm_diagnostic_timeout(&payload)),
         Some(&payload),
@@ -280,7 +280,7 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, LlmDiagnosticE
     if user_agent.len() > 256 || user_agent.contains(['\r', '\n']) {
         return Err(context.error("invalid_config", "自定义 User-Agent 格式不正确。"));
     }
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         user_agent,
         Duration::from_secs(llm_diagnostic_timeout(&payload)),
         Some(&payload),
@@ -350,7 +350,7 @@ pub(crate) async fn api_llm_test(payload: Value) -> Result<Value, LlmDiagnosticE
     }
     Ok(
         json!({ "ok": true, "endpoint": context.safe_endpoint(), "status": status,
-        "elapsed_ms": crate::market::epoch_millis().saturating_sub(context.started_at), "api_format": context.api_format }),
+        "elapsed_ms": crate::market_domain::dates::epoch_millis().saturating_sub(context.started_at), "api_format": context.api_format }),
     )
 }
 
@@ -472,7 +472,10 @@ pub(crate) fn llm_connection_http_error(status: u16, body: &[u8], api_key: &str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| {
-                    crate::market::truncate_for_note(&redact_llm_error_detail(value, api_key), 180)
+                    crate::wire_values::truncate_for_note(
+                        &redact_llm_error_detail(value, api_key),
+                        180,
+                    )
                 })
         });
     detail
@@ -669,7 +672,10 @@ pub(crate) fn llm_models_http_error(status: u16, body: &[u8], api_key: &str) -> 
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(|value| {
-                    crate::market::truncate_for_note(&redact_llm_error_detail(value, api_key), 180)
+                    crate::wire_values::truncate_for_note(
+                        &redact_llm_error_detail(value, api_key),
+                        180,
+                    )
                 })
         });
     detail

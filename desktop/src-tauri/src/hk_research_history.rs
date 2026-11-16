@@ -24,8 +24,8 @@ struct DatedHistoryFetch {
 }
 
 fn date_key(raw: &str) -> Result<String, String> {
-    let key =
-        crate::market::compact_date_key(raw).ok_or_else(|| format!("无效港股历史日期：{raw}"))?;
+    let key = crate::market_domain::dates::compact_date_key(raw)
+        .ok_or_else(|| format!("无效港股历史日期：{raw}"))?;
     chrono::NaiveDate::parse_from_str(&key, "%Y%m%d").map_err(|error| error.to_string())?;
     Ok(key)
 }
@@ -39,11 +39,13 @@ fn expected_end(end: &str) -> Result<String, String> {
         .ok_or_else(|| "无效历史日期".to_owned())?
         .and_utc()
         .timestamp_millis();
-    let trading = crate::market::expected_market_quote_date_from_epoch_ms(epoch.max(0) as u128)
-        .unwrap_or(key);
-    let current =
-        crate::market::expected_market_quote_date_from_epoch_ms(crate::market::epoch_millis())
-            .unwrap_or_else(|| trading.clone());
+    let trading =
+        crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(epoch.max(0) as u128)
+            .unwrap_or(key);
+    let current = crate::market_domain::dates::expected_market_quote_date_from_epoch_ms(
+        crate::market_domain::dates::epoch_millis(),
+    )
+    .unwrap_or_else(|| trading.clone());
     Ok(trading.min(current))
 }
 
@@ -58,12 +60,12 @@ fn range_covers(history: &HkHistoryRecord, start: &str, end: &str) -> bool {
     let first = history
         .bars
         .iter()
-        .filter_map(|bar| crate::market::compact_date_key(&bar.date))
+        .filter_map(|bar| crate::market_domain::dates::compact_date_key(&bar.date))
         .min();
     let last = history
         .bars
         .iter()
-        .filter_map(|bar| crate::market::compact_date_key(&bar.date))
+        .filter_map(|bar| crate::market_domain::dates::compact_date_key(&bar.date))
         .max();
     first.is_some_and(|first| first.as_str() <= start)
         && last.is_some_and(|last| last.as_str() >= end)
@@ -116,7 +118,7 @@ fn coverage(
                 .quotes
                 .get(code)
                 .and_then(|quote| quote.quote_time.as_deref())
-                .and_then(crate::market::compact_date_key)
+                .and_then(crate::market_domain::dates::compact_date_key)
                 .filter(|date| date <= &end);
             if let Some(quote_date) = quote_date {
                 let suspended =
@@ -258,7 +260,7 @@ where
     if policy == DataPolicy::CacheOnly {
         local_data::require_coverage("hk_history", &before)?;
     }
-    let now = crate::market::epoch_millis();
+    let now = crate::market_domain::dates::epoch_millis();
     let mut requested = Vec::new();
     if policy == DataPolicy::Refresh {
         for (code, row) in codes.iter().zip(&before) {
@@ -405,7 +407,7 @@ pub(super) async fn prepare(
     if policy == DataPolicy::Refresh {
         crate::hk_market::ensure_hk_provider_ready("tencent")?;
     }
-    let client = crate::market::build_http_client_with_proxy(
+    let client = crate::network::http::build_http_client_with_proxy(
         "Mozilla/5.0 GuXuanYou HK research history",
         Duration::from_secs(8),
         Some(payload),
@@ -787,7 +789,7 @@ mod tests {
         let request: stock_optimizer_core::TrendScreenRequest = serde_json::from_value(json!({"criteria":{"limit":100,"include_st":true},"limit":10,"start_date":"20260706","end_date":"20261107"})).unwrap();
         let codes = stock_optimizer_core::trend_screen_candidate_codes(&data.stocks, &request);
         let fetcher = || {
-            let client = crate::market::build_http_client_with_proxy(
+            let client = crate::network::http::build_http_client_with_proxy(
                 "Mozilla/5.0 GuXuanYou HK live research probe",
                 Duration::from_secs(8),
                 None,

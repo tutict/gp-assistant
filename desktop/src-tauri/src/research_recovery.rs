@@ -1,7 +1,26 @@
 //! Research-only delivery journal. Call mutations under the existing exclusive app DB guard.
 //! Snapshots are immutable recovery evidence; no cleanup is attempted on the error path.
-use super::*;
 use crate::durability;
+use crate::research::schema::configure_connection;
+use crate::research::storage::packs::remove_sqlite_sidecars;
+use crate::research::storage::vectors::invalidate_vector_cache;
+use crate::research::storage::ResearchStore;
+use crate::research::storage::INITIALIZED_DATABASES;
+use crate::research::validation::read_only;
+use crate::research::validation::validate_database;
+use rusqlite::params;
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+use serde::Deserialize;
+use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
+use std::collections::HashSet;
+use std::fs;
+use std::io::Read;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 const MANIFEST: &str = "research-delivery.json";
 const GENERATION: &str = "delivery_generation";
@@ -43,62 +62,6 @@ enum FaultPhase {
 
 fn artifact(root: &Path, generation: u64, suffix: &str) -> PathBuf {
     root.join(format!("research.sqlite.g{generation}.{suffix}"))
-}
-
-pub(super) fn validate_header(path: &Path) -> Result<(), String> {
-    let mut file =
-        fs::File::open(path).map_err(|e| format!("cannot inspect research database: {e}"))?;
-    let mut header = [0; 16];
-    if file.metadata().map_err(|e| e.to_string())?.len() < 100
-        || file.read_exact(&mut header).is_err()
-        || &header != b"SQLite format 3\0"
-    {
-        return Err(format!(
-            "invalid research database {}; original preserved",
-            path.display()
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_database(path: &Path) -> Result<(), String> {
-    validate_header(path)?; // SQLite considers a zero-byte file a valid empty DB; we must not.
-    durability::validate_sqlite(path)?;
-    let connection = read_only(path)?;
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-    let count: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN
-         ('research_metadata','documents','chunks','research_threads','research_answers','research_messages','research_answer_citations')",
-        [], |row| row.get(0)
-    ).map_err(|e| e.to_string())?;
-    let legacy_v2_documents_only = version == 2
-        && connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='documents'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(|e| e.to_string())?
-            == 1;
-    if count != 7 && !legacy_v2_documents_only {
-        return Err("unrecognized research schema; original preserved".into());
-    }
-    let foreign_key_error = connection
-        .prepare("PRAGMA foreign_key_check")
-        .map_err(|e| e.to_string())?
-        .exists([])
-        .map_err(|e| e.to_string())?;
-    if foreign_key_error {
-        return Err("research foreign key validation failed; original preserved".into());
-    }
-    Ok(())
-}
-
-fn read_only(path: &Path) -> Result<Connection, String> {
-    Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| format!("cannot read research database: {e}"))
 }
 
 fn generation(path: &Path) -> Result<u64, String> {
@@ -459,6 +422,12 @@ fn deliver_with_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::research::storage::packs::import_research_documents;
+    use crate::research::storage::packs::read_portable_pack;
+    use crate::research::storage::packs::rollback_research_documents;
+    use crate::research::time::unique_suffix;
+    use serde_json::json;
+    use serde_json::Value;
 
     struct TempRoot(PathBuf);
     impl TempRoot {

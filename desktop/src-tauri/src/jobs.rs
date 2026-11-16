@@ -728,7 +728,7 @@ pub(crate) fn has_active_work(app: &tauri::AppHandle) -> bool {
 
 async fn dispatch(app: tauri::AppHandle, kind: Kind, payload: Value) -> Result<Value, String> {
     match kind {
-        Kind::MarketRefresh => crate::market::api_market_refresh(app, payload).await,
+        Kind::MarketRefresh => crate::market::commands::api_market_refresh(app, payload).await,
         Kind::Backtest => crate::screening::api_backtest(app, payload).await,
         // Deliberately use the existing synchronous import primitive, not the command
         // that detaches embedding work. FTS is rebuilt by import_app_pack itself.
@@ -982,44 +982,99 @@ mod tests {
 
     #[test]
     fn cancel_and_timeout_drop_async_work_before_followup_batches() {
+        struct Dropped(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                if let Some(signal) = self.0.take() {
+                    let _ = signal.send(());
+                }
+            }
+        }
         tauri::async_runtime::block_on(async {
+            let observe_limit = Duration::from_secs(15);
             for timeout in [false, true] {
                 let dir = Temp::new();
                 let jobs = Jobs::open(&dir.db()).unwrap();
                 let calls = Arc::new(AtomicUsize::new(0));
                 let next = calls.clone();
                 let runner = jobs.clone();
-                let handle = tauri::async_runtime::spawn(async move {
+                let (start, mut started) = tokio::sync::oneshot::channel();
+                let (drop_signal, mut dropped) = tokio::sync::oneshot::channel();
+                let (followup, wait_for_followup) = tokio::sync::oneshot::channel();
+                let mut handle = tauri::async_runtime::spawn(async move {
                     runner
                         .execute(
                             "stop",
                             request(),
-                            Duration::from_millis(if timeout { 35 } else { 5000 }),
+                            // Admission and the running write share this deadline. Leave
+                            // room for them under the full suite's default parallel load.
+                            Duration::from_secs(10),
                             || async move {
+                                let _dropped = Dropped(Some(drop_signal));
                                 next.fetch_add(1, Ordering::SeqCst);
-                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                start.send(()).expect("work-start observer must exist");
+                                wait_for_followup
+                                    .await
+                                    .expect("followup release must exist");
                                 next.fetch_add(1, Ordering::SeqCst);
                                 Ok(json!({"done":true}))
                             },
                         )
                         .await
                 });
-                while calls.load(Ordering::SeqCst) == 0 {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                let start_observation = tokio::time::timeout(observe_limit, async {
+                    tokio::select! {
+                        biased;
+                        result = &mut handle => panic!(
+                            "execution completed before work started: timeout={timeout}, result={result:?}, calls={}",
+                            calls.load(Ordering::SeqCst)
+                        ),
+                        signal = &mut started => signal.expect("work dropped its start signal before starting"),
+                    }
+                })
+                .await;
+                if start_observation.is_err() {
+                    handle.abort();
+                    panic!(
+                        "work did not start within {observe_limit:?}: timeout={timeout}, calls={}",
+                        calls.load(Ordering::SeqCst)
+                    );
                 }
                 if !timeout {
-                    jobs.cancel("stop".into()).await.unwrap();
+                    tokio::time::timeout(observe_limit, jobs.cancel("stop".into()))
+                        .await
+                        .expect("running cancellation must finish within the observer bound")
+                        .unwrap();
                 }
+                let completed = tokio::time::timeout(observe_limit, &mut handle).await;
+                let result = match completed {
+                    Ok(result) => result,
+                    Err(_) => {
+                        handle.abort();
+                        panic!("started execution did not finish within {observe_limit:?}: timeout={timeout}");
+                    }
+                };
                 assert_eq!(
-                    handle.await.unwrap().unwrap_err(),
+                    result.unwrap().unwrap_err(),
                     if timeout {
                         "job_timed_out"
                     } else {
                         "job_cancelled"
                     }
                 );
+                assert!(
+                    dropped.try_recv().is_ok(),
+                    "async work must drop before execution completes"
+                );
+                assert!(
+                    followup.send(()).is_err(),
+                    "dropped work must reject a followup batch release"
+                );
                 assert_eq!(calls.load(Ordering::SeqCst), 1);
-                let status = jobs.status("stop".into()).await.unwrap();
+                let status = tokio::time::timeout(observe_limit, jobs.status("stop".into()))
+                    .await
+                    .expect("terminal status must be available within the observer bound")
+                    .unwrap();
                 assert_eq!(status.state, if timeout { "failed" } else { "cancelled" });
                 assert!(!status.blocking_may_continue);
                 assert!(status.side_effects_may_have_occurred);

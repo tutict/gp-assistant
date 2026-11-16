@@ -1,0 +1,21 @@
+[package]
+name = "gp-rust-architecture"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.100"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[[test]]
+name = "architecture"
+path = "architecture.rs"
+harness = false
+
+[dev-dependencies]
+syn = { version = "3", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde_json = "1"
+
