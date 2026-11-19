@@ -389,7 +389,7 @@ describe("ScreenPanel adaptive states", () => {
       customTab.props.onClick();
     });
     expect(textContent(renderer)).toContain("暂无匹配股票");
-    expect(textContent(renderer)).toContain("自定义条件筛选");
+    expect(customTab.props["aria-selected"]).toBe(true);
   });
 
   it("ignores a second run click while the current screening request is active", async () => {

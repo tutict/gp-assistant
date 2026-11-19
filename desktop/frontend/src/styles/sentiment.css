@@ -192,7 +192,6 @@
 .sentiment-history > div { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2); margin-top: var(--space-3); }
 .sentiment-panel .sentiment-history .btn { white-space: normal; justify-content: flex-start; text-align: left; max-width: 100%; }
 .sentiment-history button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
-.sentiment-disclaimer { padding-top: var(--space-4); }
 .sentiment-evidence-drawer { width: min(560px, 100vw); overflow-wrap: anywhere; }
 .sentiment-evidence-drawer p { color: var(--text-secondary); line-height: 1.8; font-size: var(--fs-data); }
 .sentiment-evidence-drawer blockquote { margin: var(--space-5) 0; line-height: 1.85; font-size: var(--fs-body); }

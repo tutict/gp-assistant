@@ -150,6 +150,10 @@ describe("AgentResultView", () => {
     expect(target).toBeTruthy();
     expect(html).toContain(`id="${target}"`);
     expect(html).toContain("2026-11-09");
+    const details = html.match(/<details class="compact-context"[^>]*>[\s\S]*?<\/details>/)?.[0];
+    expect(details).toContain("证据详情");
+    expect(details).toContain("2026Q3");
+    expect(details).not.toContain("未经审计");
     expect(html).toContain("2026Q3");
     expect(html).toContain("CNY");
     expect(html).toContain("查看原文");

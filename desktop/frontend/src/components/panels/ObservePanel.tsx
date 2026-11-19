@@ -336,7 +336,7 @@ export function ObservePanel({
   );
 }
 
-export function ObserveResultView({ result, mobileRuntime = false, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability, extraActions, financialAction, financialMeta, stockInformation, financialDisclosure }: {
+export function ObserveResultView({ result, mobileRuntime = false, expandProfessionalDetails = false, inWatchlist = false, onToggleWatchlist, onOpenNews, onAskAgent, capability, extraActions, financialAction, financialStatus, financialIssues, stockInformation, financialDisclosure }: {
   result: ObserveResult;
   mobileRuntime?: boolean;
   expandProfessionalDetails?: boolean;
@@ -347,7 +347,8 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
   capability?: MarketCapability;
   extraActions?: ReactNode;
   financialAction?: ReactNode;
-  financialMeta?: string;
+  financialStatus?: string;
+  financialIssues?: string[];
   stockInformation?: ReactNode;
   financialDisclosure?: ReactNode;
 }) {
@@ -425,7 +426,8 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
         <FundamentalSnapshot
           stock={stock}
           financial={financial}
-          financialMeta={financialMeta || (market === "hk" && financial ? [financial.source || "港股财务源", financial.period || "报告期未知", financial.report_date ? `报告 ${financial.report_date}` : "", financial.disclosed_at ? `披露 ${financial.disclosed_at}` : "", financial.updated_at ? `主源抓取 ${financial.updated_at}` : "", financial.supplemental_source ? `${financial.supplemental_source}抓取 ${financial.supplemental_updated_at || "时间未知"}` : "", financial.verification_status === "conflict" ? "核验有冲突" : "来源候选值未核验", financial.fx_reference ? `汇率参考 ${financial.fx_reference.rate}（${financial.fx_reference.observed_at}）` : "金额按来源原币展示"].filter(Boolean).join(" · ") : undefined)}
+          financialStatus={financialStatus}
+          financialIssues={financialIssues}
           action={financialAction}
           disclosure={financialDisclosure}
         />
@@ -472,25 +474,53 @@ function observationCoverage(result: ObserveResult): MarketCapability["coverage"
   };
 }
 
-export function FundamentalSnapshot({ stock, financial, financialMeta, action, disclosure }: { stock: StockItem; financial?: FinancialIndicatorSection | null; financialMeta?: string; action?: ReactNode; disclosure?: ReactNode }) {
+export function FundamentalSnapshot({ stock, financial, financialStatus, financialIssues, action, disclosure }: {
+  stock: StockItem;
+  financial?: FinancialIndicatorSection | null;
+  financialStatus?: string;
+  financialIssues?: string[];
+  action?: ReactNode;
+  disclosure?: ReactNode;
+}) {
   const snapshot = buildFundamentalSnapshotData(stock, financial);
+  const isHk = /\.HK$/i.test(stock.code);
+  const verificationStatus = financial?.verification_status;
+  const verificationLabel = verificationStatus === "conflict" ? "核验有冲突"
+    : verificationStatus === "verified" ? "已核验"
+    : verificationStatus || (isHk && financial) ? "来源候选值未核验" : "";
+  const financialSource = financial && [financial.source || (isHk ? "港股财务源" : "来源未提供"), verificationLabel].filter(Boolean).join(" · ");
   const missingFields = snapshot.details.filter(item => isMissingMetricText(item.value)).map(item => item.label);
   return (
-    <section className="observe-fundamental-snapshot" aria-label="最新基本面" data-market={/\.HK$/i.test(stock.code) ? "hk" : "cn"}>
+    <section className="observe-fundamental-snapshot" aria-label="最新基本面" data-market={isHk ? "hk" : "cn"}>
       <header>
         <div>
           <h3>基本面快照</h3>
-          {financialMeta ? <p className="data-provenance">{financialMeta}</p> : null}
+          {financialSource && <p className="data-provenance">{financialSource}</p>}
+          {financialStatus && <p className="data-provenance" role="status">{financialStatus}</p>}
         </div>
         <div className="observe-fundamental-periods">
           <time><span>行情</span>{formatObserveTime(snapshot.quoteTime)}</time>
           {financial?.latest_disclosure_period ? <time><span>最新披露</span>{financial.latest_disclosure_period}</time> : null}
-          <time><span>{financial?.latest_disclosure_period ? "报表" : "财务"}</span>{snapshot.financialPeriod}</time>
+          <time><span>报告期</span>{snapshot.financialPeriod}</time>
           {action}
         </div>
       </header>
+      {(financial || Boolean(financialIssues?.length)) && (
+        <details className="compact-context">
+          <summary><span>来源与核验</span></summary>
+          {financial && <dl>
+            {financial.report_date && <div><dt>报告日期</dt><dd>{formatObserveTime(financial.report_date)}</dd></div>}
+            <div><dt>披露日期</dt><dd>{formatObserveTime(financial.disclosed_at, "未提供")}</dd></div>
+            <div><dt>主源抓取</dt><dd>{formatObserveTime(financial.updated_at, "未提供")}</dd></div>
+            {financial.supplemental_source && <div><dt>补充源</dt><dd>{financial.supplemental_source} · 抓取 {formatObserveTime(financial.supplemental_updated_at, "未提供")}</dd></div>}
+            {financial.fx_reference && <div><dt>汇率参考</dt><dd>1 HKD = {financial.fx_reference.rate} CNY · {financial.fx_reference.source} · 观测 {formatObserveTime(financial.fx_reference.observed_at)}</dd></div>}
+          </dl>}
+          {isHk && financial && <p>金额按来源原币展示。</p>}
+          {financial?.latest_disclosure_period && financial.period && <p>每股与资产指标保留原报告期，估值和股本取行情快照。</p>}
+          {financialIssues?.map((issue) => <p key={issue}>{issue}</p>)}
+        </details>
+      )}
       {disclosure}
-      {financial?.latest_disclosure_period && financial?.period ? <p className="data-provenance hk-statement-period">{financial.period} 报表指标 · 每股与资产指标保留原报告期，估值和股本取行情快照。</p> : null}
       <dl className="observe-fundamental-primary" aria-label="每股收益与股本结构">
         {snapshot.primary.map((item) => (
           <div key={item.label} className={isMissingMetricText(item.value) ? "is-missing" : undefined}>

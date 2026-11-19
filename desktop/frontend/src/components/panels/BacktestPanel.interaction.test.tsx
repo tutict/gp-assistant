@@ -118,7 +118,10 @@ describe("BacktestPanel interactions", () => {
       strategy_mode: "candidate_snapshot",
       data_policy: "refresh",
     }), expect.anything());
-    expect(textContent(renderer)).toContain("研究型回测");
+    expect(textContent(renderer)).toContain("港股历史覆盖有限");
+    const limits = renderer.root.findAllByType("details").find((node) => node.findByType("summary").findAllByProps({ children: "港股历史限制" }).length > 0);
+    expect(limits?.props.open).toBeUndefined();
+    expect(limits?.findByType("p").children.join("")).toContain("退市证券");
     await act(async () => renderer.unmount());
   });
 

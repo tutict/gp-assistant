@@ -33,34 +33,28 @@ function hasChineseName(value: string | null | undefined): boolean {
   return Boolean(value && /\p{Script=Han}/u.test(value));
 }
 
-function hkFinancialMeta(result: HkObserveResult, loading: boolean): string {
-  if (loading) return "正在更新财务报表与季度经营披露，当前先展示缓存…";
-  const financial = result.financial;
-  if (!financial) return result.financial_notes?.join(" · ") || "尚无港股财务缓存，正在尝试获取。";
+function hkFinancialStatus(result: HkObserveResult, loading: boolean): string {
+  const errors = { ...result.financial?.field_errors, ...result.financial_field_errors };
+  return [
+    loading ? "正在更新财务…" : "",
+    !result.financial ? "暂无港股财务数据" : result.financial_stale ? "财务缓存陈旧" : "",
+    errors.financial ? "财务更新失败" : "",
+    errors.eastmoney_supplement ? "财务主源异常" : "",
+    errors.sina_supplement ? "财务补充源异常" : "",
+  ].filter(Boolean).join(" · ");
+}
 
-  const metadata = [
-    financial.candidate_source || "港股财务源",
-    financial.normalized_period || "报告期未知",
-    financial.report_date ? `报告 ${financial.report_date}` : "",
-    financial.disclosed_at ? `披露 ${financial.disclosed_at}` : "",
-    result.candidate_updated_at || financial.candidate_fetched_at
-      ? `主源抓取 ${formatHkDataTime(result.candidate_updated_at || financial.candidate_fetched_at)}`
-      : "",
-    financial.supplemental_source
-      ? `${financial.supplemental_source}抓取 ${formatHkDataTime(financial.supplemental_fetched_at)}`
-      : "",
-    financial.verification_status === "conflict" ? "核验有冲突" : "来源候选值未核验",
-    result.fx_rate
-      ? `汇率参考 ${result.fx_rate.rate}（${result.fx_rate.observed_at}）`
-      : "金额按来源原币展示",
-  ];
-  const fieldErrors = result.financial_field_errors || financial.field_errors || {};
-  const sourceErrors = Object.entries(fieldErrors).flatMap(([field, error]) => {
-    if (field === "sina_supplement") return [`新浪补充未完成：${error}`];
-    if (field === "eastmoney_supplement") return [`东方财富主源异常：${error}`];
-    return [];
-  });
-  return [...metadata, ...sourceErrors].filter(Boolean).join(" · ");
+function hkFinancialIssues(result: HkObserveResult): string[] {
+  const errors = { ...result.financial?.field_errors, ...result.financial_field_errors };
+  const labels: Record<string, string> = {
+    eastmoney_supplement: "东方财富主源异常",
+    sina_supplement: "新浪补充未完成",
+    financial: "财务更新失败",
+  };
+  return [...new Set([
+    ...Object.entries(errors).filter(([key, value]) => key in labels && value).map(([key, value]) => labels[key] + "：" + value),
+    ...(!result.financial ? result.financial_notes || [] : []),
+  ])];
 }
 
 function formatQuarterlyAmount(value: number | null | undefined, currency: string, unit: string): string {
@@ -393,7 +387,8 @@ export function HkObservePanel({
         onOpenNews={onOpenNews}
         onAskAgent={onAskAgent}
         capability={capability || result.quote_capability}
-        financialMeta={hkFinancialMeta(result, financialLoading)}
+        financialStatus={hkFinancialStatus(result, financialLoading)}
+        financialIssues={hkFinancialIssues(result)}
         stockInformation={<HkStockInformation result={result} />}
         financialDisclosure={<HkQuarterlyUpdatePanel update={result.quarterly_update} checkedAt={result.quarterly_update_checked_at} error={result.quarterly_update_error} inline />}
         extraActions={<button type="button" className="stock-row-action" onClick={() => void load(activeCode, "refresh")}>刷新行情</button>}

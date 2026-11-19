@@ -671,7 +671,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </div>}
         </section>
 
-        <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
+        {(!questionsOpen || citation) && <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>}
         </div>
       </main>
 
@@ -713,7 +713,7 @@ export function NewsRagPanel(props: NewsRagPanelProps) {
           </div>
           <WorkspaceSaveStatus />
           <div className="research-composer-meta">
-            <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>
+            {questionsOpen && !citation && <p className="research-risk-boundary">仅供研究，不构成投资建议。</p>}
             {!activeLlmConfig && <p className="research-composer-setup">未配置模型，将只用已导入资料回答</p>}
           </div>
         </form>

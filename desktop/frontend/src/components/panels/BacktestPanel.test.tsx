@@ -91,7 +91,11 @@ describe("BacktestResultView volatility diagnostics", () => {
     }} />);
     expect(html).toContain("合成样例");
     expect(html).toContain("不提供真实收益证据");
-    expect(html).toContain("sample-data");
+    const details = html.match(/<details class="compact-context"[^>]*>[\s\S]*?<\/details>/)?.[0];
+    expect(details).toContain("数据与口径");
+    expect(details).toContain("sample-data");
+    expect(details).toContain("unit-rank-fix/v1");
+    expect(details).not.toContain("合成样例");
   });
   it("identifies the portfolio curve, renders its benchmark, and scopes the symbol selector", () => {
     const html = renderToStaticMarkup(

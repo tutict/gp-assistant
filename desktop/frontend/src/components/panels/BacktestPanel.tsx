@@ -1,6 +1,6 @@
 import { useWorkspaceState, useWorkspaceStatus, useWorkspaceStore } from "../../hooks/useWorkspace";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { formatLocalDataError, localDataSummary } from "../../lib/localData";
+import { formatLocalDataError, localDataPreview, localDataSummary } from "../../lib/localData";
 import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AdaptiveScreenRequest, BacktestResult, DataStatus, EquityPoint, StockItem, VolatilitySnapshot, WatchlistItem } from "../../types";
 import type { FilterCriteria } from "../FilterBar";
@@ -269,12 +269,13 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
     : activeStrategyMode === "adaptive_swing_v1"
       ? "按每个区间重新筛选候选股。"
       : "评估当前候选名单的组合表现。";
-  const researchBoundary = <>
-    {market === "hk" && <>
-      研究型回测使用港股日线，缺少所选日期区间时按需补齐；当前证券范围和免费数据可能缺少退市证券、复权公司行动及点时财报，结果不代表严格历史模拟。
-    </>}
-    仅供研究，不构成投资建议。
-  </>;
+  const researchBoundary = <>{market === "hk" && "港股历史覆盖有限。"}仅供研究，不构成投资建议。</>;
+  const hkHistoryLimits = market === "hk" && (
+    <details className="compact-context">
+      <summary><span>港股历史限制</span></summary>
+      <p>缺少所选区间的日线时按需补齐。证券范围和免费数据可能缺少退市证券、复权公司行动及点时财报，结果不代表严格历史模拟。</p>
+    </details>
+  );
 
   return (
     <div className="panel-container">
@@ -330,7 +331,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
             <div><dt>回测方式</dt><dd>{completedConditions.mode}</dd></div>
             <div><dt>单次成本</dt><dd>{completedConditions.cost}</dd></div>
           </dl>
-          {parametersCollapsed && <p className="workspace-boundary">{researchBoundary}</p>}
+          {parametersCollapsed && <><p className="workspace-boundary">{researchBoundary}</p>{hkHistoryLimits}</>}
         </div>}
         <div className="backtest-parameter-groups" id={parameterGroupsId} hidden={parametersCollapsed}>
           <section className="criteria-field-group backtest-field-group">
@@ -432,6 +433,7 @@ export function BacktestPanel({ criteria, watchlist, preferredSource, onPreferre
           <p className="backtest-parameter-boundary workspace-boundary">
             {researchBoundary}
           </p>
+          {hkHistoryLimits}
         </div>
       </section>
       <div className="panel-result">
@@ -526,16 +528,32 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
   const metrics = result.metrics || {};
   const equityPointCount = result.equity_curve?.length ?? 0;
   const symbolNames = useBacktestSymbolNames(result, watchlist);
+  const dataPreview = localDataPreview(result);
   const dataSummary = localDataSummary(result);
   const pitReport = result.pit_evaluation_report ? parseResearchReport(result.pit_evaluation_report) : null;
   return (
     <div className="backtest-result">
-      {result.parameter_set_id ? <p className="backtest-stale-notice">参数版本：{result.parameter_set_id} · 评分修订：{result.scoring_revision || "未记录"}</p> : null}
-      {pitReport ? <p className="backtest-stale-notice">{pitReport.realData ? "真实 PIT 数据声明" : "合成样例 · 不提供真实收益证据"} · 数据集：{pitReport.datasetId || "未记录"} · 报告：{pitReport.runId || "未记录"}</p> : null}
-      <div className={`backtest-result-tabs${dataSummary ? " backtest-result-tabs-with-status" : ""}`} role="tablist" aria-label="回测结果视图">
+      {pitReport && <p className="backtest-stale-notice">{pitReport.realData ? "真实 PIT 数据声明" : "合成样例 · 不提供真实收益证据"}</p>}
+      {result.adaptive_release_gate && !result.adaptive_release_gate.passed && (
+        <p className="backtest-stale-notice" role="status">验证门槛尚未全部通过，请查看验证明细。</p>
+      )}
+      {(dataPreview || result.parameter_set_id || result.scoring_revision || pitReport) && (
+        <details className="compact-context">
+          <summary><span>{dataPreview || "数据与口径"}</span>{dataPreview && <small>数据与口径</small>}</summary>
+          {dataSummary && <p>{dataSummary}</p>}
+          <dl>
+            {result.parameter_set_id && <div><dt>参数版本</dt><dd>{result.parameter_set_id}</dd></div>}
+            {(result.scoring_revision || result.parameter_set_id) && <div><dt>评分修订</dt><dd>{result.scoring_revision || "未记录"}</dd></div>}
+            {pitReport && <>
+              <div><dt>数据集</dt><dd>{pitReport.datasetId || "未记录"}</dd></div>
+              <div><dt>报告</dt><dd>{pitReport.runId || "未记录"}</dd></div>
+            </>}
+          </dl>
+        </details>
+      )}
+      <div className="backtest-result-tabs" role="tablist" aria-label="回测结果视图">
         {[["overview","结果概览"],["volatility","波动率分析"],["validation","验证明细"]].map(([key,label]) => <button type="button" role="tab" key={key} id={`${tabPrefix}-${key}-tab`} aria-selected={resultTab === key} aria-controls={`${tabPrefix}-${key}`} onClick={()=>setResultTab(key)}>{label}</button>)}
       </div>
-      {dataSummary ? <p className="backtest-data-status workspace-boundary" role="status">{dataSummary}</p> : null}
       <div role="tabpanel" id={`${tabPrefix}-overview`} aria-labelledby={`${tabPrefix}-overview-tab`} hidden={resultTab !== "overview"}>
       <div className="metric-strip">
         <div className="metric metric-hero"><span>总收益</span><strong className={(metrics.total_return ?? 0) > 0 ? "positive" : (metrics.total_return ?? 0) < 0 ? "negative" : undefined}>{formatSignedPercent((metrics.total_return ?? 0) * 100)}</strong></div>
@@ -568,7 +586,6 @@ export function BacktestResultView({ result, watchlist = [] }: { result: Backtes
         <div><span>方式</span><strong>{backtestStrategyLabel(metrics.strategy_mode)}</strong></div>
       </section>
 
-      {result.adaptive_release_gate && !result.adaptive_release_gate.passed && <p className="backtest-stale-notice">验证门槛尚未全部通过，请查看验证明细。</p>}
       </div>
       <div role="tabpanel" id={`${tabPrefix}-validation`} aria-labelledby={`${tabPrefix}-validation-tab`} hidden={resultTab !== "validation"}>
       {result.adaptive_release_gate && (

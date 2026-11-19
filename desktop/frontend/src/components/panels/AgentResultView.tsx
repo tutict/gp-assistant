@@ -222,16 +222,33 @@ function EvidenceSourceCard({ item, id, citationPrefix }: { item: AgentEvidenceI
   };
   const status = item.verification_status ? EVIDENCE_STATUS_LABELS[item.verification_status] || item.verification_status : "";
   const level = item.source_tier || item.level;
+  const title = item.title || item.source || "证据";
+  const audit = item.audit_status === "unaudited"
+    ? item.verification_status === "official_disclosure_unaudited" ? "" : "未经审计"
+    : item.audit_status;
   return <article id={`${citationPrefix}-${id}`} tabIndex={-1}>
     <span>{`${id}${level && level !== "evidence" ? ` · ${EVIDENCE_SOURCE_LABELS[level] || level}` : ""}`}</span>
-    <strong>{item.title || item.source || "证据"}</strong>
-    <p>{item.summary || item.source || "暂无证据摘要"}</p>
-    {item.source && <em>{item.source}</em>}
+    <strong>{title}</strong>
+    {item.summary && item.summary !== title && <p>{item.summary}</p>}
+    {item.source && item.source !== title && item.source !== item.summary && <em>{item.source}</em>}
     {(item.published_at || item.document_id) && <em>披露日期：{item.published_at || "未提供"}</em>}
-    {(item.report_period || item.currency || item.unit) && <em>{[item.report_period, item.currency, item.unit ? EVIDENCE_UNIT_LABELS[item.unit] || item.unit : ""].filter(Boolean).join(" · ")}</em>}
-    {(status || item.audit_status || item.summary_kind === "article_summary") && <em>{[status, item.audit_status === "unaudited" ? "未经审计" : item.audit_status, item.summary_kind === "article_summary" ? "正文摘要" : ""].filter(Boolean).join(" · ")}</em>}
+    {(status || audit || item.summary_kind === "article_summary") && <em>{[
+      status,
+      audit,
+      item.summary_kind === "article_summary" ? "正文摘要" : "",
+    ].filter(Boolean).join(" · ")}</em>}
     {url && <button className="agent-source-open" type="button" disabled={opening} onClick={openSource}>{opening ? "正在打开…" : "查看原文"}</button>}
     {error && <p role="status">{error}</p>}
+    {(item.report_period || item.currency || item.unit) && (
+      <details className="compact-context">
+        <summary><span>证据详情</span></summary>
+        <dl>
+          {item.report_period && <div><dt>报告期</dt><dd>{item.report_period}</dd></div>}
+          {item.currency && <div><dt>币种</dt><dd>{item.currency}</dd></div>}
+          {item.unit && <div><dt>单位</dt><dd>{EVIDENCE_UNIT_LABELS[item.unit] || item.unit}</dd></div>}
+        </dl>
+      </details>
+    )}
   </article>;
 }
 

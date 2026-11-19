@@ -520,3 +520,39 @@ it("exposes the actual title and summary when naming key and detailed evidence b
     expect(accessibleName).toContain(evidence.source_name);
   }
 });
+
+it("has one research boundary in the active sentiment view", async () => {
+  await act(async () => { renderer = create(<SentimentPanel initialView="sentiment" initialCode={snapshot.stock_code} />); });
+  expect(renderer!.root.findAllByProps({ className: "workspace-boundary" })).toHaveLength(1);
+  expect(renderer!.root.findAllByProps({ className: "sentiment-disclaimer" })).toHaveLength(0);
+});
+
+it("shows one fixed-window status while waiting, on failure and after retry", async () => {
+  let resolveBaseline: (value: unknown) => void = () => undefined;
+  let rejectCandidate: (error: Error) => void = () => undefined;
+  const backtest = vi.fn()
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveBaseline = resolve; }))
+    .mockImplementationOnce(() => new Promise((_, reject) => { rejectCandidate = reject; }));
+  const successful = { metrics: { total_return: 0.02, num_stocks: 6, max_drawdown: -0.01 }, equity_curve: [], symbols: [] };
+  backtest.mockResolvedValue(successful);
+  const existing = postJson.getMockImplementation()!;
+  postJson.mockImplementation(async (path: string) => {
+    if (path === "/api/backtest") return backtest();
+    if (path.endsWith("/latest")) return { analysis: { ...previous, stage: "过热", evidence_ids: ["E1"] } };
+    return existing(path);
+  });
+  await act(async () => { renderer = create(<SentimentPanel initialView="sentiment" initialCode={snapshot.stock_code} criteria={{ max_pe: 20 }} />); });
+  await click("按当前情绪优化选股");
+  const proposal = () => textOf(renderer!.root.findByProps({ "aria-label": "情绪选股参数建议" }).children);
+  expect(proposal()).toContain("应用前需完成固定窗口回测。");
+  await click("运行固定窗口回测");
+  expect(proposal()).toContain("正在运行固定窗口回测…");
+  expect(proposal()).not.toContain("应用前需完成固定窗口回测。");
+  await act(async () => { resolveBaseline(successful); rejectCandidate(new Error("样本不足")); });
+  expect(proposal()).toContain("回测失败：样本不足");
+  expect(proposal()).not.toContain("应用前需完成固定窗口回测。");
+  await click("运行固定窗口回测");
+  expect(proposal()).toContain("已完成固定窗口回测：20260701—20260930。");
+  expect(proposal()).not.toContain("样本不足");
+  expect(proposal()).not.toContain("应用前需完成固定窗口回测。");
+});

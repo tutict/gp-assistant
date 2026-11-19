@@ -954,7 +954,8 @@ describe("NewsRagPanel", () => {
     expect(send.props.title).toContain("仅供研究，不构成投资建议");
     expect(send.props["aria-label"]).toContain("仅供研究，不构成投资建议");
     expect(renderer.root.findAllByProps({ className: "research-empty-boundary" })).toHaveLength(0);
-    expect(textOf(renderer.root.findAllByProps({ className: "research-risk-boundary" })[0]))
+    expect(renderer.root.findAllByProps({ className: "research-risk-boundary" })).toHaveLength(1);
+    expect(textOf(renderer.root.findByProps({ className: "research-risk-boundary" })))
       .toBe("仅供研究，不构成投资建议。");
     await act(async () => { renderer.unmount(); });
   });

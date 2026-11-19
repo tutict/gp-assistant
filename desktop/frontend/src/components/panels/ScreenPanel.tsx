@@ -1,4 +1,4 @@
-import { formatLocalDataError, localDataSummary, localDataUnavailable } from "../../lib/localData";
+import { formatLocalDataError, localDataPreview, localDataSummary, localDataUnavailable } from "../../lib/localData";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AdaptiveScreenRequest,
@@ -28,6 +28,7 @@ import { StockList, displayStockScore } from "../StockList";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Sheet } from "../ui/Sheet";
 import { RawJson } from "../RawJson";
+import { CollapsibleNotes } from "../CollapsibleNotes";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import { jsonByteLength, logPerfRecord, perfDiagnosticsAreEnabled, perfOutcomeForError } from "../../lib/perfDiagnostics";
 
@@ -582,7 +583,7 @@ export function ScreenPanel({
             {hkRefreshButton}
             {runButton}
           </div>
-          {modeNote}
+          {result == null && modeNote}
           {hasControlFields && (
             <div className={controlsClassName}>
               {controlFields}
@@ -598,6 +599,7 @@ export function ScreenPanel({
             <p>{currentConditions}</p>
           </details>
         ) : <span>{currentConditions}</span>}
+        {!mobileLayout && result != null && <span>仅供研究，不构成投资建议。</span>}
         {!mobileResults && adjustmentButton}
       </div>
       <Sheet open={mobileLayout && criteriaOpen} onClose={()=>setCriteriaOpen(false)} label="筛选条件" className="screen-criteria-sheet" backdropClassName="screen-criteria-sheet-backdrop">
@@ -612,7 +614,6 @@ export function ScreenPanel({
       </Sheet>
 
       <div className="panel-result screen-panel-result" aria-busy={loading}>
-        {result != null && localDataSummary(result) && <p className="workspace-boundary" role="status">{localDataSummary(result)}</p>}
         {result != null && (resultConditionsChanged || loading || error) && (
           <p className="screen-result-conditions" role="status">
             {resultConditionsChanged ? "条件已修改，当前结果仍使用：" : "当前结果使用："}{resultConditions}
@@ -676,7 +677,9 @@ export const ScreenResultView = memo(function ScreenResultView({
   criteriaSnapshot?: FilterCriteria;
 }) {
   const resultRecord = result as ScreenResult;
-  const notes = resultRecord.notes || [];
+  const notes = (resultRecord.notes || []).filter((note) => !/^仅供研究，不构成投资建议[。.]?$/.test(note.trim()));
+  const dataSummary = localDataPreview(resultRecord);
+  const dataDetails = localDataSummary(resultRecord);
   const groups = useMemo(
     () => grouped ? normalizeSectorGroups(result as SectorScreenResult) : normalizeScreenGroups(result),
     [grouped, result],
@@ -694,9 +697,20 @@ export const ScreenResultView = memo(function ScreenResultView({
         <div><dt>总数</dt><dd>{resultRecord.total ?? rows.length}</dd></div>
         <div><dt>最高分</dt><dd>{highestScore?.toFixed(2) ?? "—"}</dd></div>
       </dl>
-      <p className="screen-result-lead">综合评分反映条件匹配程度；入选原因与资料来源可在个股依据中查看。</p>
-      <p className="workspace-boundary screen-result-boundary">仅供研究，不构成投资建议。</p>
-      {resultRecord.parameter_set_id ? <p className="screen-result-lead">参数版本：{resultRecord.parameter_set_id} · 评分修订：{resultRecord.scoring_revision || "未记录"}</p> : null}
+      <details className="screen-data-summary">
+        <summary>
+          <span>{dataSummary || "结果说明"}</span>
+          {dataSummary && <small>查看明细</small>}
+        </summary>
+        {dataDetails && <p>{dataDetails}</p>}
+        <p>评分表示条件匹配度，入选依据见个股详情。</p>
+        {(resultRecord.parameter_set_id || resultRecord.scoring_revision) && (
+          <dl>
+            {resultRecord.parameter_set_id && <div><dt>参数版本</dt><dd>{resultRecord.parameter_set_id}</dd></div>}
+            <div><dt>评分修订</dt><dd>{resultRecord.scoring_revision || "未记录"}</dd></div>
+          </dl>
+        )}
+      </details>
 
       {resultRecord.market_regime && (
         <section className="adaptive-regime-summary" aria-label="市场状态">
@@ -751,12 +765,7 @@ export const ScreenResultView = memo(function ScreenResultView({
         <StockList items={rows} watchlist={watchlist} onToggleWatchlist={onToggleWatchlist} onObserveStock={onObserveStock} onNewsStock={onNewsStock} />
       )}
 
-      {notes.length ? (
-        <details className="notes-block">
-          <summary>数据覆盖提示</summary>
-          <div className="notes">{notes.map((note) => <p key={note}>{note}</p>)}</div>
-        </details>
-      ) : null}
+      <CollapsibleNotes notes={notes} label="数据覆盖" />
 
       {onRunBacktest && rows.length > 0 && (
         <div className="result-actions screen-result-actions">

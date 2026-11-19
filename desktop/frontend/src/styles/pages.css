@@ -2659,8 +2659,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 
 .backtest-stale-notice { color: var(--warning); font-size: var(--fs-body); }
 .backtest-result-tabs { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--line); margin-bottom: var(--space-4); }
-.backtest-result-tabs-with-status { margin-bottom: 0; }
-.backtest-data-status.workspace-boundary { margin: 0; overflow-wrap: anywhere; }
 .backtest-result-tabs button { min-height: var(--control-height); padding: var(--space-2) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .backtest-result-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .backtest-result [hidden] { display: none; }
@@ -6322,7 +6320,7 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .observe-overview-data-summary { margin: 0; color: var(--text-muted); font-size: var(--fs-caption); }
 .hk-observe-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .hk-stock-information > header { align-items: flex-start; }
-.hk-stock-information .data-provenance { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.observe-fundamental-snapshot > header .data-provenance { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
 .hk-stock-information .hk-stock-information-meta { margin-top: var(--space-3); }
 .hk-history-status,
 .hk-quote-refresh-summary { overflow-wrap: anywhere; }
@@ -6330,7 +6328,6 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
 .observe-result .hk-quarterly-inline { margin: 0 0 var(--space-4); padding: var(--space-3) 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
 .observe-result .hk-quarterly-inline .hk-financial-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .observe-result .hk-quarterly-inline .hk-financial-metric { border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; padding: var(--space-2) 0; }
-.hk-statement-period { margin: var(--space-3) 0; }
 .hk-financial-panel { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line-soft); border-radius: var(--radius-lg); background: var(--surface-raised); }
 .hk-financial-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .hk-financial-heading h3 { margin: 0; }
@@ -6383,3 +6380,34 @@ html.kline-mobile-fullscreen .kline-workspace.fullscreen .kline-stats {
   .hk-security-row .state-pill { max-width: 100%; }
   .hk-confirm-ordinary { margin: 0 0 var(--space-2); }
 }
+
+:is(.screen-data-summary, .compact-context) { min-width: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-secondary); }
+:is(.screen-data-summary, .compact-context) > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-dense);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--fs-label);
+}
+:is(.screen-data-summary, .compact-context) > summary::-webkit-details-marker { display: none; }
+:is(.screen-data-summary, .compact-context) > summary > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:is(.screen-data-summary, .compact-context) > summary > small { font-size: inherit; white-space: nowrap; }
+:is(.screen-data-summary, .compact-context) > summary::after {
+  content: "";
+  flex: 0 0 6px;
+  height: 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+:is(.screen-data-summary, .compact-context)[open] > summary::after { transform: rotate(225deg); }
+:is(.screen-data-summary, .compact-context) > p { margin: var(--space-2) 0; font-size: var(--fs-caption); line-height: 1.5; overflow-wrap: anywhere; }
+:is(.screen-data-summary, .compact-context) > dl { display: grid; gap: var(--space-2); margin: 0 0 var(--space-3); }
+:is(.screen-data-summary, .compact-context) > dl > div { display: flex; flex-wrap: wrap; gap: var(--space-2); font-size: var(--fs-caption); }
+:is(.screen-data-summary, .compact-context) dd { margin: 0; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+@media (max-width: 768px) {
+  :is(.screen-data-summary, .compact-context) > summary { min-height: var(--touch-primary); }
+}
+:is(.screen-data-summary, .compact-context) > summary:focus-visible { outline-offset: -2px; }

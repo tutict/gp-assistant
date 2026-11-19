@@ -34,7 +34,25 @@ describe("ScreenResultView", () => {
     expect(markup).toContain("<dt>最高分</dt><dd>18.20</dd>");
     expect(markup).not.toContain("screen-result-metric-strip");
     expect(markup).not.toContain("按综合评分选出");
-    expect(markup.indexOf('class="workspace-boundary screen-result-boundary"')).toBeLessThan(markup.indexOf('class="quote-table"'));
+    expect(markup.match(/不构成投资建议/g)).toHaveLength(1);
+  });
+  it("compresses data provenance into a compact disclosure", () => {
+    const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 79, returned: 10,
+      data_metadata: {
+        data_policy: "refresh",
+        quote_as_of: "20261119",
+        history_as_of: "20261119",
+        coverage_count: 83,
+        coverage: [{ code: "002432.SZ", available_bars: 120, required_bars: 120 }],
+      },
+      items: [{ stock: { code: "002432.SZ", name: "样本甲", price: 10 }, score: 16.08, reasons: [] }],
+    }} grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} />);
+
+    expect(markup).toContain('class="screen-data-summary"');
+    expect(markup).toContain("联网刷新");
+    expect(markup).toContain("覆盖 83 项");
+    expect(markup).toContain("行情与日线 2026-11-19");
+    expect(markup).toContain("查看明细");
   });
   it("shows hydrated EPS values from HK financial caches in the stock list", () => {
     const markup = renderToStaticMarkup(<ScreenResultView result={{ total: 1, returned: 1,
@@ -65,8 +83,10 @@ describe("ScreenResultView", () => {
       ],
     }} grouped={false} watchlist={[]} onToggleWatchlist={() => undefined} />);
     const visibleMarkup = markup.split('<details class="raw-json">')[0];
-    expect(visibleMarkup).toContain("数据覆盖提示");
+    expect(visibleMarkup).toContain("数据覆盖");
     expect(visibleMarkup).toContain('class="notes-block"');
+    expect(visibleMarkup).toContain('class="notes-summary"');
+    expect(visibleMarkup).toContain('<strong>5</strong>');
     expect(visibleMarkup).toContain("605358.SH");
     expect(visibleMarkup).toContain("14 只候选");
     expect(visibleMarkup).toContain("Skipped 2");
@@ -142,8 +162,8 @@ describe("ScreenResultView", () => {
     expect(markup).toContain("90%");
     expect(markup).toContain("主榜");
     expect(markup).toContain("探索榜");
-    expect(markup).toContain("综合评分反映条件匹配程度；入选原因与资料来源可在个股依据中查看。");
-    expect(markup).toContain('<p class="workspace-boundary screen-result-boundary">仅供研究，不构成投资建议。</p>');
+    expect(markup).toContain("评分表示条件匹配度，入选依据见个股详情。");
+    expect(markup).toContain('<p class="stock-result-boundary">仅供选股研究，不构成投资建议。</p>');
     expect(markup).toContain("入选：测试理由");
     expect(markup).toContain("当前识别为趋势");
   });

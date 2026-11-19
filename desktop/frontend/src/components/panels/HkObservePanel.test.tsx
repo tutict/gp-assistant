@@ -85,6 +85,24 @@ describe("HkObservePanel stability", () => {
     await act(async () => renderer.unmount());
   });
 
+  it("keeps financial conflicts and staleness outside the source details", async () => {
+    getJsonMock.mockResolvedValue({ ...staleResult, notes: [], financial_stale: true,
+      financial: { code: "00700", currency: "HKD", raw_report_period: "2026Q2", normalized_period: "2026Q2",
+        candidate_source: "主源样本", candidate_fetched_at: "2026-10-19T12:00:00Z", verification_status: "conflict",
+        field_errors: { sina_supplement: "补充源请求超时" } },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<HkObservePanel code="00700.HK" watchlist={[]} onWatchlistChange={vi.fn()} />); });
+    const snapshot = renderer.root.findByProps({ "aria-label": "最新基本面" });
+    const details = snapshot.findAllByType("details").find((node) => textContent(node.findByType("summary")) === "来源与核验");
+    expect(details?.props.open).toBeUndefined();
+    expect(textContent(details)).toContain("补充源请求超时");
+    expect(textContent(snapshot.findByType("header"))).toContain("核验有冲突");
+    expect(textContent(snapshot.findByType("header"))).toContain("财务缓存陈旧");
+    expect(textContent(snapshot.findByType("header"))).not.toContain("补充源请求超时");
+    await act(async () => renderer.unmount());
+  });
+
   it("preserves three-decimal HK prices in the observation summary", async () => {
     getJsonMock.mockResolvedValue({ ...staleResult, quote: { ...staleResult.quote, price: 0.005, change_pct: 0 }, notes: [] });
     let renderer!: ReactTestRenderer;
@@ -515,8 +533,9 @@ describe("HkObservePanel stability", () => {
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<HkObservePanel code="00700.HK" watchlist={[]} onWatchlistChange={vi.fn()} />); });
     const text = JSON.stringify(renderer.toJSON());
-    expect(text).toContain("报告 2026-06-30");
-    expect(text).toContain("披露 2026-08-25");
+    const sources = renderer.root.findAllByType("details").find((node) => textContent(node.findByType("summary")) === "来源与核验");
+    expect(textContent(sources)).toContain("报告日期2026-06-30");
+    expect(textContent(sources)).toContain("披露日期2026-08-25");
     expect(text).toContain("CNY 100");
     expect(text).toContain("CNY 2/股");
     expect(text).toContain("9.9%");
@@ -574,7 +593,7 @@ describe("HkObservePanel stability", () => {
     const fundamental=renderer.root.findByProps({"aria-label":"最新基本面"});
     expect(fundamental.findAllByProps({"aria-label":"港股季度经营更新"})).toHaveLength(1);
     expect(textContent(fundamental)).toContain("最新披露2026Q3");
-    expect(textContent(fundamental)).toContain("2026H1 报表指标");
+    expect(textContent(fundamental)).toContain("报告期2026H1");
   });
 
   it("keeps cached financial values and exposes a retry after financial refresh failure", async () => {

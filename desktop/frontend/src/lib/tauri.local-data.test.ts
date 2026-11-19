@@ -54,10 +54,20 @@ describe("local-first IPC", () => {
 });
 
 describe("local metadata UI", () => {
-  it("shows actual cache dates and coverage without calling data live", async () => {
-    const { localDataSummary } = await import("./localData");
-    const summary = localDataSummary({ data_metadata: { data_policy: "cache_only", quote_as_of: "20200103", history_as_of: "20200102", coverage_count: 1, coverage: [{code:"000001.SZ",available_bars:60,required_bars:60}] } });
-    expect(summary).toContain("未联网"); expect(summary).toContain("20200102"); expect(summary).toContain("60/60");
+  it("summarizes cache dates compactly and preserves full coverage details", async () => {
+    const { localDataPreview, localDataSummary } = await import("./localData");
+    const result = { data_metadata: { data_policy: "cache_only", quote_as_of: "20200103", history_as_of: "20200102", coverage_count: 1, coverage: [{code:"000001.SZ",available_bars:60,required_bars:60}] } };
+    const summary = localDataPreview(result);
+    const details = localDataSummary(result);
+    expect(summary).toContain("本地缓存");
+    expect(summary).toContain("行情 2020-01-03");
+    expect(summary).toContain("日线 2020-01-02");
+    expect(summary).toContain("覆盖 1 项");
+    expect(summary).not.toContain("60/60");
+    expect(details).toContain("未联网");
+    expect(details).toContain("20200102");
+    expect(details).toContain("60/60");
     expect(localDataSummary({})).toBeNull();
+    expect(localDataPreview({})).toBeNull();
   });
 });

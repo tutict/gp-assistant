@@ -278,6 +278,7 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
   const [parameterBacktestError, setParameterBacktestError] = useState<string>();
   const [strategyName, setStrategyName] = useState("");
   const [strategySaving, setStrategySaving] = useState(false);
+  const [strategyError, setStrategyError] = useState<string>();
   const [strategies, setStrategies] = useState<SentimentStrategy[]>([]);
   const [strategyHistory, setStrategyHistory] = useState<Record<string, SentimentStrategyVersion[]>>({});
   useEffect(() => { void getSentimentStrategies().then((result) => setStrategies(result.items)).catch(() => undefined); }, []);
@@ -355,6 +356,7 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
   </details>;
   const createParameterProposal = () => {
     if (!analysis) return;
+    setParameterBacktestError(undefined);
     setParameterProposal(buildSentimentParameterProposal({
       stage: analysis.stage,
       currentCriteria: props.criteria || {},
@@ -372,7 +374,7 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
     return candidate;
   };
   const runParameterBacktest = async () => {
-    if (!parameterProposal || !props.criteria) return;
+    if (parameterBacktestLoading || !parameterProposal || !props.criteria) return;
     setParameterBacktestLoading(true); setParameterBacktestError(undefined);
     const baselineCriteria = { ...props.criteria };
     const candidateCriteria = candidateCriteriaForProposal();
@@ -384,7 +386,7 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
       ]);
       const baseline = requireBacktestResult(baselineRaw); const candidate = requireBacktestResult(candidateRaw);
       const backtest = { period: "20260701—20260930", baseline: { returned: baseline.metrics.num_stocks, maxDrawdown: baseline.metrics.max_drawdown ?? null, concentration: null }, candidate: { returned: candidate.metrics.num_stocks, maxDrawdown: candidate.metrics.max_drawdown ?? null, concentration: null } };
-      setParameterProposal((previous) => previous ? buildSentimentParameterProposal({ stage: previous.stage, currentCriteria: props.criteria || {}, evidenceIds: previous.evidenceIds, evidenceSummary: previous.evidenceSummary, backtest }) : previous);
+      setParameterProposal((previous) => previous === parameterProposal ? buildSentimentParameterProposal({ stage: previous.stage, currentCriteria: props.criteria || {}, evidenceIds: previous.evidenceIds, evidenceSummary: previous.evidenceSummary, backtest }) : previous);
     } catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setParameterBacktestLoading(false); }
   };
@@ -397,13 +399,13 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
   };
   const saveParameterStrategy = async () => {
     if (!parameterProposal?.canSaveStrategy) return;
-    setStrategySaving(true); setParameterBacktestError(undefined);
+    setStrategySaving(true); setStrategyError(undefined);
     try {
       const name = strategyName.trim() || `情绪${parameterProposal.stage}策略`;
       await saveSentimentStrategy({ strategy_id: strategyIdFromName(name, parameterProposal.stage), name, stage: parameterProposal.stage, evidence_ids: parameterProposal.evidenceIds, changes: parameterProposal.changes.map((change) => ({ ...change, relative_change: change.relativeChange })), criteria: candidateCriteriaForProposal(), backtest: { ...parameterProposal.backtest, passed: true }, source_analysis_id: analysis?.analysis_id });
       setStrategyName("");
       setStrategies((await getSentimentStrategies()).items);
-    } catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    } catch (cause) { setStrategyError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setStrategySaving(false); }
   };
 
@@ -415,15 +417,15 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
   };
   const toggleStrategy = async (strategy: SentimentStrategy) => {
     try { const result = await setSentimentStrategyStatus(strategy.strategy_id, strategy.status === "active" ? "disabled" : "active"); setStrategies(result.items); }
-    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    catch (cause) { setStrategyError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const showStrategyHistory = async (strategy: SentimentStrategy) => {
     try { const result = await getSentimentStrategyVersions(strategy.strategy_id); setStrategyHistory((previous) => ({ ...previous, [strategy.strategy_id]: result.items })); }
-    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    catch (cause) { setStrategyError(cause instanceof Error ? cause.message : String(cause)); }
   };
   const rollbackStrategy = async (strategy: SentimentStrategy, version: number) => {
     try { const result = await rollbackSentimentStrategy(strategy.strategy_id, version); setStrategies(result.items); const current = result.items.find((item) => item.strategy_id === strategy.strategy_id); if (current) loadStrategy(current); await showStrategyHistory(current || strategy); }
-    catch (cause) { setParameterBacktestError(cause instanceof Error ? cause.message : String(cause)); }
+    catch (cause) { setStrategyError(cause instanceof Error ? cause.message : String(cause)); }
   };
 
   const askAgent = () => {
@@ -506,21 +508,23 @@ function StockWorkspace({ code, view, props, state, onSelect, stockOpen, onStock
       })}</details>}
       {history.length > 0 && <details className="sentiment-history sentiment-detail-group" aria-label="分析历史"><summary>分析历史</summary><div>{history.map((item) => <button className="btn" type="button" key={item.analysis_id} disabled={busy} aria-pressed={analysis?.analysis_id === item.analysis_id} onClick={() => state.selectAnalysis(item)}>{sentimentTime(item.created_at)} · {item.stage}</button>)}</div></details>}
       <details className="sentiment-detail-group" aria-label="策略与参数"><summary>策略与参数</summary>
-        {analysis && <button type="button" className="btn" disabled={busy || state.asking} onClick={createParameterProposal}>按当前情绪优化选股</button>}
+        {analysis && <button type="button" className="btn" disabled={busy || state.asking || parameterBacktestLoading} onClick={createParameterProposal}>按当前情绪优化选股</button>}
       {parameterProposal && <section className="sentiment-parameter-proposal-card" aria-label="情绪选股参数建议">
         <header><h3>情绪选股参数建议</h3><button type="button" className="btn" onClick={() => setParameterProposal(undefined)}>关闭</button></header>
         <p>模板：{parameterProposal.templateId} · 阶段：{parameterProposal.stage}</p>
         <p>{parameterProposal.evidenceSummary || "暂无摘要"}</p>
         {parameterProposal.changes.length ? <ul>{parameterProposal.changes.map((change) => <li key={String(change.field)}><strong>{String(change.field)}</strong>：{String(change.before ?? "未设置")} → {String(change.after ?? "未设置")}<small>{change.reason}</small></li>)}</ul> : <p>当前证据不足以提出参数调整。系统不会自动放宽风险约束。</p>}
-        <p className="sentiment-quality-note">当前仅生成建议，尚未完成回测，也不会自动修改筛选条件。确认前需要运行固定历史窗口回测。</p>
-         {parameterBacktestError && <p className="evolution-error" role="alert">{parameterBacktestError}</p>}
-         <p className="sentiment-quality-note">{parameterProposal.backtest.period === "待回测" ? "当前仅生成建议，尚未完成回测。" : `已完成固定窗口回测：${parameterProposal.backtest.period}。`}确认前不会自动修改筛选条件。</p>
+        {parameterBacktestLoading ? <p className="sentiment-quality-note" role="status">正在运行固定窗口回测…</p>
+          : parameterBacktestError ? <p className="evolution-error" role="alert">回测失败：{parameterBacktestError}</p>
+          : <p className="sentiment-quality-note" role="status">{parameterProposal.backtest.period === "待回测"
+            ? "应用前需完成固定窗口回测。"
+            : "已完成固定窗口回测：" + parameterProposal.backtest.period + "。"}</p>}
          {parameterProposal.canSaveStrategy && <input className="sentiment-strategy-name" value={strategyName} onChange={(event) => setStrategyName(event.target.value)} placeholder="策略名称（可选）" aria-label="策略名称" />}
          <div><button type="button" className="btn" disabled={parameterBacktestLoading || !props.criteria || !parameterProposal.changes.length} onClick={() => void runParameterBacktest()}>{parameterBacktestLoading ? "回测中…" : parameterProposal.backtest.period === "待回测" ? "运行固定窗口回测" : "重新回测"}</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || !props.onApplyScreenCriteria} onClick={applyParameterProposal}>确认本次应用</button><button type="button" className="btn" disabled={!parameterProposal.canSaveStrategy || strategySaving} onClick={() => void saveParameterStrategy()}>{strategySaving ? "保存中…" : "保存为情绪策略"}</button></div>
       </section>}
+      {strategyError && <p className="evolution-error" role="alert">{strategyError}</p>}
       <SentimentStrategyPanel strategies={strategies} history={strategyHistory} onLoad={loadStrategy} onToggle={toggleStrategy} onHistory={showStrategyHistory} onRollback={rollbackStrategy} />
       </details>
-      <p className="sentiment-disclaimer">仅供研究，不构成投资建议。</p>
     </div>
     <Sheet open={view === "sentiment" && !stockOpen && (followupOpen || !!evidenceId)} onClose={() => evidenceId ? followupOpen ? returnToFollowup() : setEvidenceId(null) : setFollowupOpen(false)} label={evidenceId ? "情绪证据详情" : "围绕本次分析追问"} className="research-surface-sheet sentiment-detail-sheet" backdropClassName="research-surface-backdrop">
       <div ref={followupScrollRef} className="sentiment-followup-scroll" hidden={!!evidenceId} onScroll={(event) => { followupPositionRef.current.scroll = event.currentTarget.scrollTop; }}>

@@ -67,11 +67,37 @@ export function formatLocalDataError(error: unknown): string {
   } catch { /* Preserve non-JSON errors. */ }
   return text;
 }
-export function localDataSummary(result: unknown): string | null {
+function localDataMetadata(result: unknown): Record<string, unknown> | null {
   if (!result || typeof result !== "object" || !("data_metadata" in result)) return null;
-  const meta = result.data_metadata as Record<string, unknown> | null;
-  if (!meta) return null;
-  const coverage = Array.isArray(meta.coverage) ? meta.coverage as Record<string, unknown>[] : [];
+  const metadata = result.data_metadata as Record<string, unknown> | null;
+  return metadata || null;
+}
+
+function localDataDate(value: unknown, fallback: string): string {
+  if (!value) return fallback;
+  return String(value).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+}
+
+export function localDataPreview(result: unknown): string | null {
+  const metadata = localDataMetadata(result);
+  if (!metadata) return null;
+  const coverage = Array.isArray(metadata.coverage) ? metadata.coverage : [];
+  const coverageCount = Number(metadata.coverage_count) || coverage.length;
+  const quoteDate = localDataDate(metadata.quote_as_of, "日期未知");
+  const historyDate = localDataDate(metadata.history_as_of, "");
+  const sameDate = quoteDate === historyDate;
+  return [
+    metadata.data_policy === "refresh" ? "联网刷新" : "本地缓存",
+    `${sameDate ? "行情与日线" : "行情"} ${quoteDate}`,
+    historyDate && !sameDate ? `日线 ${historyDate}` : "",
+    coverageCount ? `覆盖 ${coverageCount} 项` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+export function localDataSummary(result: unknown): string | null {
+  const metadata = localDataMetadata(result);
+  if (!metadata) return null;
+  const coverage = Array.isArray(metadata.coverage) ? metadata.coverage as Record<string, unknown>[] : [];
   const ranges = coverage.slice(0, 3).map(item => String(item.code ?? item.kind) + "：" + (item.available_bars ?? "?") + "/" + (item.required_bars ?? "?") + " 条").join("，");
-  return [meta.data_policy === "refresh" ? "显式联网刷新 / 本地数据" : "本地缓存（未联网）", "行情截至 " + (meta.quote_as_of || "未知"), "历史截至 " + (meta.history_as_of || "未使用"), ranges, meta.coverage_count ? "覆盖检查 " + meta.coverage_count + " 项" : "", "缓存日期不代表实时行情"].filter(Boolean).join(" · ");
+  return [metadata.data_policy === "refresh" ? "显式联网刷新 / 本地数据" : "本地缓存（未联网）", "行情截至 " + (metadata.quote_as_of || "未知"), "历史截至 " + (metadata.history_as_of || "未使用"), ranges, metadata.coverage_count ? "覆盖检查 " + metadata.coverage_count + " 项" : "", "缓存日期不代表实时行情"].filter(Boolean).join(" · ");
 }
