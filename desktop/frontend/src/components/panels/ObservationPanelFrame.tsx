@@ -4,7 +4,7 @@ import { MarketCapabilityStatus } from "../ui/MarketCapabilityStatus";
 
 export interface ObservationPanelFrameProps {
   market: MarketId;
-  title: string;
+  title: ReactNode;
   security: SecurityId;
   provenance: ObservationMetadata[];
   capability: MarketCapability;

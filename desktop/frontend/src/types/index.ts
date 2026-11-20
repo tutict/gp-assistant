@@ -1233,6 +1233,7 @@ export interface LlmConnectionTestResult {
 export interface StockRowView {
   code: string;
   name: string;
+  isSt?: boolean;
   industry?: string;
   price?: number;
   quoteTime?: string;

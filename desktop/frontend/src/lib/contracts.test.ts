@@ -553,12 +553,14 @@ describe("response normalizers", () => {
   it("normalizes nested screen, graph, and trend stock rows", () => {
     const rows = normalizeScreenRows({
       items: [
-        { stock: { code: "300750.SZ", name: "CATL", pe: 20 }, score: 18, reasons: ["quality"] },
+        { stock: { code: "300750.SZ", name: "CATL", pe: 20, is_st: true }, score: 18, reasons: ["quality"] },
         { stock: { code: "600519.SH", name: "Moutai" }, final_score: 88, relation_score: 10, reasons: ["relation"] },
       ],
     });
     expect(rows.map((row) => row.code)).toEqual(["300750.SZ", "600519.SH"]);
     expect(rows[0].score).toBe(18);
+    expect(rows[0].isSt).toBe(true);
+    expect(rows[1].isSt).toBeUndefined();
     expect(rows[1].score).toBe(88);
   });
 

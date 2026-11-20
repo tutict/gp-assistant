@@ -321,6 +321,37 @@ describe("ObservePanel requests", () => {
     expect(renderer.root.findByProps({ className: "observe-detail-disclosure" }).props.open).toBe(true);
     await act(async () => renderer.unmount());
   });
+  it("shows a clear ST status beside an A-share observation heading", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ObserveResultView result={{ source: "local", stock: {
+        code: "600000.SH", name: "ST样本", is_st: true,
+      }, notes: [] }} />);
+    });
+    const badge = renderer.root.findByProps({ className: "stock-status-badge" });
+    expect(badge.props["aria-label"]).toBe("ST（特别处理）");
+    expect(badge.parent?.type).toBe("h2");
+    expect(badge.children).toContain("ST");
+    await act(async () => renderer.unmount());
+  });
+
+  it("does not label a normal A-share or an HK security as ST", async () => {
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<ObserveResultView result={{ source: "local", stock: {
+        code: "600001.SH", name: "普通样本", is_st: false,
+      }, notes: [] }} />);
+    });
+    expect(renderer.root.findAllByProps({ className: "stock-status-badge" })).toHaveLength(0);
+    await act(async () => {
+      renderer.update(<ObserveResultView result={{ market: "hk", source: "local", stock: {
+        code: "00700.HK", name: "港股样本", is_st: true,
+      }, notes: [] }} />);
+    });
+    expect(renderer.root.findAllByProps({ className: "stock-status-badge" })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
   it("keeps observation local when no external fund-flow record is cached", async () => {
     const today = currentSystemDateInputValue();
     getJsonMock.mockResolvedValue({

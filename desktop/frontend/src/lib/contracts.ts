@@ -644,6 +644,7 @@ export function normalizeStockRow(item: unknown): StockRowView | null {
   return {
     code: stock.code,
     name: stock.name || stock.code,
+    isSt: typeof stock.is_st === "boolean" ? stock.is_st : undefined,
     industry: stock.industry,
     price: firstNumber(stock.price),
     quoteTime: stock.quote_time,

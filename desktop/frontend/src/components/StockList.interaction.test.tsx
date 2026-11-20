@@ -28,6 +28,22 @@ describe("stock comparison interactions",()=>{
     await act(async()=>renderer.unmount());
     vi.unstubAllGlobals();
   });
+  it("shows an explicit ST badge for a flagged A-share result", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const rows = normalizeScreenRows({ items: [
+      { stock: { code: "600000.SH", name: "ST样本", is_st: true }, score: 12 },
+      { stock: { code: "600001.SH", name: "普通样本", is_st: false }, score: 11 },
+    ] });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(<StockList items={rows} watchlist={[]} onToggleWatchlist={() => undefined} />); });
+    const badges = renderer.root.findAllByProps({ className: "stock-status-badge" });
+    expect(badges).toHaveLength(1);
+    expect(badges[0].props["aria-label"]).toBe("ST（特别处理）");
+    expect(badges[0].children).toContain("ST");
+    await act(async () => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
+
   it("shows the sourced Chinese company context beside the financial coverage", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const metric = (value: number, unit: string, currency = "CNY") => ({ value, unit, currency, source: "Eastmoney HK financial indicators" });

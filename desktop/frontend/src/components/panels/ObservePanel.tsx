@@ -380,7 +380,7 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
     <div className="observe-result">
       <ObservationPanelFrame
         market={market}
-        title={stock.name || stock.code}
+        title={<>{stock.name || stock.code}{market === "cn" && stock.is_st === true && <span className="stock-status-badge" aria-label="ST（特别处理）" title="特别处理（ST）">ST</span>}</>}
         security={identity}
         provenance={provenance}
         capability={frameCapability}
