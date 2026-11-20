@@ -33,26 +33,33 @@ function hasChineseName(value: string | null | undefined): boolean {
   return Boolean(value && /\p{Script=Han}/u.test(value));
 }
 
+const HK_FINANCIAL_ERROR_LABELS: Record<string, string> = {
+  eastmoney_supplement: "东方财富主源异常",
+  sina_supplement: "新浪补充未完成",
+  financial: "财务更新失败",
+};
+
+function hkFinancialErrors(result: HkObserveResult): Record<string, string> {
+  return { ...result.financial?.field_errors, ...result.financial_field_errors };
+}
+
 function hkFinancialStatus(result: HkObserveResult, loading: boolean): string {
-  const errors = { ...result.financial?.field_errors, ...result.financial_field_errors };
+  const errors = hkFinancialErrors(result);
   return [
     loading ? "正在更新财务…" : "",
     !result.financial ? "暂无港股财务数据" : result.financial_stale ? "财务缓存陈旧" : "",
-    errors.financial ? "财务更新失败" : "",
-    errors.eastmoney_supplement ? "财务主源异常" : "",
+    errors.financial ? HK_FINANCIAL_ERROR_LABELS.financial : "",
+    errors.eastmoney_supplement ? HK_FINANCIAL_ERROR_LABELS.eastmoney_supplement : "",
     errors.sina_supplement ? "财务补充源异常" : "",
   ].filter(Boolean).join(" · ");
 }
 
 function hkFinancialIssues(result: HkObserveResult): string[] {
-  const errors = { ...result.financial?.field_errors, ...result.financial_field_errors };
-  const labels: Record<string, string> = {
-    eastmoney_supplement: "东方财富主源异常",
-    sina_supplement: "新浪补充未完成",
-    financial: "财务更新失败",
-  };
+  const errors = hkFinancialErrors(result);
   return [...new Set([
-    ...Object.entries(errors).filter(([key, value]) => key in labels && value).map(([key, value]) => labels[key] + "：" + value),
+    ...Object.entries(errors)
+      .filter(([key, value]) => key in HK_FINANCIAL_ERROR_LABELS && value)
+      .map(([key, value]) => HK_FINANCIAL_ERROR_LABELS[key] + "：" + value),
     ...(!result.financial ? result.financial_notes || [] : []),
   ])];
 }

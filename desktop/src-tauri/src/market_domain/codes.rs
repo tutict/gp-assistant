@@ -115,6 +115,10 @@ pub(crate) fn normalize_stock_code(value: &str) -> Option<String> {
     Some(format!("{}.{}", digits, infer_market(&digits)))
 }
 
+pub(crate) fn stock_name_is_st(name: &str) -> bool {
+    name.to_ascii_uppercase().contains("ST")
+}
+
 pub(crate) fn valid_digits(value: &str) -> bool {
     value.len() == 6 && value.chars().all(|ch| ch.is_ascii_digit())
 }
@@ -180,5 +184,17 @@ pub(crate) fn eastmoney_market_code(code: &str) -> Option<u8> {
         Some(0)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod st_name_tests {
+    use super::stock_name_is_st;
+
+    #[test]
+    fn recognizes_st_markers_case_insensitively() {
+        assert!(stock_name_is_st("ST样本"));
+        assert!(stock_name_is_st("*st样本"));
+        assert!(!stock_name_is_st("贵州茅台"));
     }
 }

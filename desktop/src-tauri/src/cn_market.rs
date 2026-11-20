@@ -704,9 +704,8 @@ pub(crate) fn apply_reference_data(
             }
             stock.insert(
                 "is_st".into(),
-                json!(
-                    text(item, "name").is_some_and(|name| name.to_ascii_uppercase().contains("ST"))
-                ),
+                json!(text(item, "name")
+                    .is_some_and(|name| crate::market_domain::codes::stock_name_is_st(&name))),
             );
         }
         seed["archived_stocks"] = Value::Object(archive);
@@ -1999,6 +1998,14 @@ mod tests {
                 .abs()
                 < 1e-8
         );
+    }
+
+    #[test]
+    fn cn_reference_projection_classifies_st_directory_names() {
+        let mut seed = json!({"stocks": []});
+        let directory = vec![json!({"code":"600000.SH","name":"*ST样本股份"})];
+        apply_reference_data(&mut seed, &directory, Map::new(), "1000");
+        assert_eq!(seed["stocks"][0]["is_st"], true);
     }
 
     #[test]

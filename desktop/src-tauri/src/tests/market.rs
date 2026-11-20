@@ -55,6 +55,20 @@ fn cn_market_refresh_projects_reported_loss_roe_into_screening_with_ratio_units(
 }
 
 #[test]
+fn tencent_quote_refresh_preserves_an_existing_st_flag() {
+    let mut fields = vec![""; 80];
+    fields[1] = "普通名称";
+    fields[2] = "000001";
+    fields[3] = "10.0";
+    let seed = HashMap::from([(
+        "000001.SZ".to_string(),
+        json!({"is_st": true}).as_object().unwrap().clone(),
+    )]);
+    let stocks = parse_tencent_quotes(&format!("v_sz000001=\"{}\";", fields.join("~")), &seed, false);
+    assert_eq!(stocks[0]["is_st"], true);
+}
+
+#[test]
 fn cn_market_refresh_keeps_reported_negative_valuation_ratios() {
     let mut fields = vec![""; 80];
     fields[1] = "万科A";

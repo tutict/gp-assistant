@@ -642,7 +642,6 @@
 .tag-row span,
 .source-tier,
 .impact-pill,
-.state-pill,
 .pack-state {
   display: inline-flex;
   align-items: center;

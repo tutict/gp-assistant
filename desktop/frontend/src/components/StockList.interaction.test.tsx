@@ -36,7 +36,7 @@ describe("stock comparison interactions",()=>{
     ] });
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(<StockList items={rows} watchlist={[]} onToggleWatchlist={() => undefined} />); });
-    const badges = renderer.root.findAllByProps({ className: "stock-status-badge" });
+    const badges = renderer.root.findAllByProps({ "aria-label": "ST（特别处理）" });
     expect(badges).toHaveLength(1);
     expect(badges[0].props["aria-label"]).toBe("ST（特别处理）");
     expect(badges[0].children).toContain("ST");

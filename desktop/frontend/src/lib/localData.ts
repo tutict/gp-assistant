@@ -78,11 +78,15 @@ function localDataDate(value: unknown, fallback: string): string {
   return String(value).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
 }
 
+function localDataCoverage(metadata: Record<string, unknown>) {
+  const items = Array.isArray(metadata.coverage) ? metadata.coverage as Record<string, unknown>[] : [];
+  return { items, count: Number(metadata.coverage_count) || items.length };
+}
+
 export function localDataPreview(result: unknown): string | null {
   const metadata = localDataMetadata(result);
   if (!metadata) return null;
-  const coverage = Array.isArray(metadata.coverage) ? metadata.coverage : [];
-  const coverageCount = Number(metadata.coverage_count) || coverage.length;
+  const { count: coverageCount } = localDataCoverage(metadata);
   const quoteDate = localDataDate(metadata.quote_as_of, "日期未知");
   const historyDate = localDataDate(metadata.history_as_of, "");
   const sameDate = quoteDate === historyDate;
@@ -97,7 +101,7 @@ export function localDataPreview(result: unknown): string | null {
 export function localDataSummary(result: unknown): string | null {
   const metadata = localDataMetadata(result);
   if (!metadata) return null;
-  const coverage = Array.isArray(metadata.coverage) ? metadata.coverage as Record<string, unknown>[] : [];
+  const { items: coverage, count: coverageCount } = localDataCoverage(metadata);
   const ranges = coverage.slice(0, 3).map(item => String(item.code ?? item.kind) + "：" + (item.available_bars ?? "?") + "/" + (item.required_bars ?? "?") + " 条").join("，");
-  return [metadata.data_policy === "refresh" ? "显式联网刷新 / 本地数据" : "本地缓存（未联网）", "行情截至 " + (metadata.quote_as_of || "未知"), "历史截至 " + (metadata.history_as_of || "未使用"), ranges, metadata.coverage_count ? "覆盖检查 " + metadata.coverage_count + " 项" : "", "缓存日期不代表实时行情"].filter(Boolean).join(" · ");
+  return [metadata.data_policy === "refresh" ? "显式联网刷新 / 本地数据" : "本地缓存（未联网）", "行情截至 " + (metadata.quote_as_of || "未知"), "历史截至 " + (metadata.history_as_of || "未使用"), ranges, coverageCount ? "覆盖检查 " + coverageCount + " 项" : "", "缓存日期不代表实时行情"].filter(Boolean).join(" · ");
 }

@@ -69,5 +69,14 @@ describe("local metadata UI", () => {
     expect(details).toContain("60/60");
     expect(localDataSummary({})).toBeNull();
     expect(localDataPreview({})).toBeNull();
+    const coverageWithoutCount = { data_metadata: {
+      data_policy: "cache_only",
+      coverage: [
+        { code: "600000.SH", available_bars: 60, required_bars: 60 },
+        { code: "000001.SZ", available_bars: 55, required_bars: 60 },
+      ],
+    } };
+    expect(localDataPreview(coverageWithoutCount)).toContain("覆盖 2 项");
+    expect(localDataSummary(coverageWithoutCount)).toContain("覆盖检查 2 项");
   });
 });

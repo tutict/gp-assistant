@@ -100,6 +100,7 @@ describe("HkObservePanel stability", () => {
     expect(textContent(snapshot.findByType("header"))).toContain("核验有冲突");
     expect(textContent(snapshot.findByType("header"))).toContain("财务缓存陈旧");
     expect(textContent(snapshot.findByType("header"))).not.toContain("补充源请求超时");
+    expect(textContent(snapshot.findByType("header"))).toContain("财务补充源异常");
     await act(async () => renderer.unmount());
   });
 

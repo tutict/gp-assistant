@@ -16,6 +16,7 @@ import { StockCodeInput } from "../StockCodeInput";
 import { TrendCharts } from "../observe/ObserveCharts";
 import { PanelFeedback } from "../ui/PanelFeedback";
 import { ObservationPanelFrame } from "./ObservationPanelFrame";
+import { StockStatusBadge } from "../StockStatusBadge";
 import { LocalFirstRunControl } from "../LocalFirstRunControl";
 import {
   currentSystemDateInputValue,
@@ -380,7 +381,7 @@ export function ObserveResultView({ result, mobileRuntime = false, expandProfess
     <div className="observe-result">
       <ObservationPanelFrame
         market={market}
-        title={<>{stock.name || stock.code}{market === "cn" && stock.is_st === true && <span className="stock-status-badge" aria-label="ST（特别处理）" title="特别处理（ST）">ST</span>}</>}
+        title={<>{stock.name || stock.code}{market === "cn" && stock.is_st === true && <StockStatusBadge />}</>}
         security={identity}
         provenance={provenance}
         capability={frameCapability}

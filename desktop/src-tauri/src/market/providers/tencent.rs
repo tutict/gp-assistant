@@ -1,6 +1,7 @@
 use crate::market::providers::history::fetch_daily_history_text;
 use crate::market_domain::codes::board_label;
 use crate::market_domain::codes::normalize_stock_code;
+use crate::market_domain::codes::stock_name_is_st;
 use crate::market_domain::codes::tencent_symbol;
 use crate::market_domain::financial::estimate_roe;
 use crate::market_domain::history::filter_daily_history_rows_by_date;
@@ -236,7 +237,7 @@ pub(crate) fn parse_tencent_quotes(
             .and_then(|object| object_string(object, "industry"))
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| board_label(&code).to_string());
-        let is_st = name.to_ascii_uppercase().contains("ST")
+        let is_st = stock_name_is_st(&name)
             || existing
                 .and_then(|object| object.get("is_st"))
                 .and_then(Value::as_bool)
